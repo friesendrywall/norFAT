@@ -94,7 +94,7 @@ void tests(norFAT_FS* fs) {
 	while (res == 0) {
 		powered = 1;
 		takeDownTest = 0;
-		takeDownPeriod = 10 + (rand() % 50);
+		takeDownPeriod = 10 + (rand() % 10);
 		res = norfat_mount(fs);
 		if (res) {
 			printf("Failed %i\r\n", res);

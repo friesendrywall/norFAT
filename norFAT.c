@@ -35,6 +35,7 @@ static uint32_t findCrcIndex(norFAT_FS* fs) {
 static uint32_t validateTable(norFAT_FS* fs, uint32_t tableIndex) {
 	uint32_t crcRes, j;
 	uint8_t cr[9];
+	tableIndex %= NORFAT_TABLE_COUNT;
 	if (fs->read_block_device(
 		fs->addressStart + (NORFAT_SECTOR_SIZE * tableIndex),
 		(uint8_t*)fs->fat, NORFAT_SECTOR_SIZE)) {
@@ -159,6 +160,17 @@ static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 		memcpy(&fs->fat->commit[0], cr, 8);
 
 		//First erase, copy, erase
+		//Mark as moving
+		memset(&fs->buff, 0xFF, NORFAT_SECTOR_SIZE);
+		_FAT* fat = (_FAT*)&fs->buff;
+		fat->moving = 0;
+		uint32_t markOffset = offsetof(_FAT, flags);
+		markOffset -= (markOffset % NORFAT_PAGE_SIZE);
+		if (fs->program_block_page(fs->addressStart +
+			(swap1old * NORFAT_SECTOR_SIZE), &fs->buff[markOffset], NORFAT_PAGE_SIZE)) {
+			return NORFAT_ERR_IO;
+		}
+		//TODO: Validate old block here
 		if (fs->erase_block_sector(fs->addressStart +
 			(swap1new * NORFAT_SECTOR_SIZE))) {
 			return NORFAT_ERR_IO;
@@ -268,6 +280,7 @@ int32_t norfat_mount(norFAT_FS* fs) {
 	/* Find the first valid record */
 	uint32_t res = validateTable(fs, fs->firstFAT);
 	if (res == NORFAT_ERR_CRC) {
+		//TODO:  Don't touch anything until we have two working copies
 		res = validateTable(fs, (fs->firstFAT + 1) % NORFAT_TABLE_COUNT);
 		if (res) {
 			fs->volumeMounted = 0;
@@ -528,7 +541,6 @@ finalize:
 
 int32_t norfat_fwrite(norFAT_FS* fs, norfat_FILE* file, uint8_t* out, uint32_t len) {
 	int32_t nextSector;
-	int32_t res;
 	uint32_t writeable;
 	uint32_t blockWriteLength;
 	uint32_t blockAddress;

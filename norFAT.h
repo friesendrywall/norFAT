@@ -46,7 +46,13 @@ typedef struct {
 	_commit commit[NORFAT_CRC_COUNT];
 	uint16_t swapCount;
 	uint16_t garbageCount;
-	uint32_t future;
+	union {
+		struct {
+			uint32_t moving : 1;
+			uint32_t future : 31;
+		};
+		uint32_t flags;
+	};
 	_sector sector[NORFAT_SECTORS];
 } _FAT;/* must equal minimum sector size */
 
@@ -88,6 +94,7 @@ norfat_FILE* norfat_fopen(norFAT_FS* fs, uint8_t* filename, uint32_t flags);
 int32_t norfat_fclose(norFAT_FS* fs, norfat_FILE* file);
 int32_t norfat_fwrite(norFAT_FS* fs, norfat_FILE* file, uint8_t* out, uint32_t len);
 int32_t norfat_fread(norFAT_FS* fs, norfat_FILE* file, uint8_t* in, uint32_t len);
+int32_t norfat_remove(norFAT_FS* fs, const char * filename);
 int32_t norfat_flength(norfat_FILE* file);
 int32_t norfat_finfo(norFAT_FS* fs);
 
