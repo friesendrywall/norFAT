@@ -32,7 +32,7 @@ uint32_t read_block_device(uint32_t address, uint8_t* data, uint32_t len) {
 
 uint32_t erase_block_sector(uint32_t address)
 {
-	//printf("BLOCK: Erasing 0x%X\r\n", address);
+	
 	if (takeDownTest) {
 
 		if (takeDownPeriod != 0) {
@@ -52,7 +52,6 @@ uint32_t erase_block_sector(uint32_t address)
 
 uint32_t program_block_page(uint32_t address, uint8_t* data, uint32_t length)
 {
-	//printf("BLOCK: Programming 0x%X 0x%X\r\n", address, length);
 	if (takeDownTest) {
 
 		if (takeDownPeriod != 0) {
@@ -95,13 +94,14 @@ void tests(norFAT_FS* fs) {
 	while (res == 0) {
 		powered = 1;
 		takeDownTest = 0;
-		takeDownPeriod = 10 + (rand() % 100000);
+		takeDownPeriod = 10 + (rand() % 50);
 		res = norfat_mount(fs);
 		if (res) {
-			printf("Failed\r\n");
+			printf("Failed %i\r\n", res);
 		}
 		else {
-			norfat_finfo(fs);
+			printf("Up again\r\n");
+			//norfat_finfo(fs);
 		}
 		takeDownTest = 1;
 		while (res == 0) {
@@ -111,7 +111,7 @@ void tests(norFAT_FS* fs) {
 			if (f == NULL) {
 				res = NORFAT_ERR_NULL;
 			}
-			testLength = (test[i] << 8) + test[i];
+			testLength = (test[i%0x8000] << 8) + test[i%0x7999];
 			if (testLength == 0) {
 				testLength = 1;
 			}
@@ -127,7 +127,7 @@ void tests(norFAT_FS* fs) {
 				}
 				res = norfat_fwrite(fs, f, &test[testLength - j], tl);
 				if (res) {
-					norfat_fclose(fs, f);
+					//norfat_fclose(fs, f);
 					break;
 				}
 				j -= tl;
@@ -138,11 +138,14 @@ void tests(norFAT_FS* fs) {
 		if (res != NORFAT_ERR_IO) {
 			break;
 		}
+		res = 0;
 	}
 	//Multiple open files with power cycles
 	//Plain power cycle failure resistance
 	//Random times
 	//Rollover
+	res = norfat_format(fs);
+	res = norfat_mount(fs);
 	res = 0;
 	i = 0;
 	while (res == 0) {
@@ -167,7 +170,7 @@ void tests(norFAT_FS* fs) {
 			}
 			res = norfat_fwrite(fs, f, &test[testLength - j], tl);
 			if (res) {
-				norfat_fclose(fs, f);
+				//norfat_fclose(fs, f);
 				break;
 			}
 			j -= tl;
