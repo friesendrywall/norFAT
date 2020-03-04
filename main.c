@@ -95,12 +95,13 @@ void tests(norFAT_FS* fs) {
 		powered = 1;
 		takeDownTest = 0;
 		takeDownPeriod = 10 + (rand() % 10);
+		printf("Mount attempt .......\r\n");
 		res = norfat_mount(fs);
 		if (res) {
 			printf("Failed %i\r\n", res);
 		}
 		else {
-			printf("Up again\r\n");
+			printf("Mount success, work...\r\n");
 			//norfat_finfo(fs);
 		}
 		takeDownTest = 1;

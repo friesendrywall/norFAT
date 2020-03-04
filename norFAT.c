@@ -7,6 +7,40 @@
 
 static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap);
 
+#ifndef NORFAT_CRC
+static uint32_t crc32_table[256];
+void init_crc32(void);
+static uint32_t crc32(void* buf, int len, uint32_t Seed);
+
+#define CRC32_POLY 0x04c11db7     /* AUTODIN II, Ethernet, & FDDI 0x04C11DB7 */
+#define NORFAT_CRC crc32
+
+uint32_t crc32(void* buf, int len, uint32_t Seed) {
+	unsigned char* p;
+	uint32_t crc = Seed;
+	if (!crc32_table[1]) /* if not already done, */
+		init_crc32(); /* build table */
+	for (p = buf; len > 0; ++p, --len)
+		crc = (crc << 8) ^ crc32_table[(crc >> 24) ^ *p];
+	return crc; /* transmit complement, per CRC-32 spec */
+}
+
+void init_crc32(void) {
+	int i, j;
+	uint32_t c;
+	for (i = 0; i < 256; ++i) {
+		for (c = i << 24, j = 8; j > 0; --j)
+			c = c & 0x80000000 ? (c << 1) ^ CRC32_POLY : (c << 1);
+		crc32_table[i] = c;
+	}
+}
+
+#endif
+
+#if 0
+uint32_t crc32_table[256];
+
+
 uint32_t crc32_for_byte(uint32_t r) {
 	for (int j = 0; j < 8; ++j)
 		r = (r & 1 ? 0 : (uint32_t)0xEDB88320L) ^ r >> 1;
@@ -21,6 +55,7 @@ void crc32(const void* data, size_t n_bytes, uint32_t* crc) {
 	for (size_t i = 0; i < n_bytes; ++i)
 		* crc = table[(uint8_t)* crc ^ ((uint8_t*)data)[i]] ^ *crc >> 8;
 }
+#endif
 
 static uint32_t findCrcIndex(_FAT* fat) {
 	uint32_t i;
@@ -79,17 +114,14 @@ static uint32_t loadTable(norFAT_FS* fs, uint32_t tableIndex) {
 		(uint8_t*)fs->fat, NORFAT_SECTOR_SIZE)) {
 		return NORFAT_ERR_IO;
 	}
-	crcRes = 0xFFFFFFFF;
 	j = findCrcIndex(fs->fat);
 	NORFAT_DEBUG(("Using CRC location %i\r\n", j));
 	memcpy(cr, &fs->fat->commit[j], 8);
 	cr[8] = 0;
 	uint32_t crclen = sizeof(_FAT) - (sizeof(_commit) * (j + 1ULL));
-	crc32(&fs->fat->commit[j + 1], crclen, &crcRes);
+	crcRes = NORFAT_CRC(&fs->fat->commit[j + 1], crclen, 0xFFFFFFFF);
 	if (crcRes != strtoul(cr, NULL, 0x10)) {
-		NORFAT_ERROR(("Table %i crc failure addr 0x%X 0x%X != %s len %i\r\n",
-			tableIndex, (uint32_t)& fs->fat->commit[j + 1],
-			crcRes, cr, crclen));
+		NORFAT_ERROR(("Table %i crc failure\r\n", tableIndex));
 		return NORFAT_ERR_CRC;
 	}
 	NORFAT_INFO(("Table %i crc match\r\n", tableIndex));
@@ -99,7 +131,7 @@ static uint32_t loadTable(norFAT_FS* fs, uint32_t tableIndex) {
 static int32_t validateTable(norFAT_FS* fs, uint32_t tableIndex, uint32_t* crc) {
 	uint32_t crcRes, j;
 	int32_t res = NORFAT_TABLE_GOOD;
-	uint8_t cr[9] = "ÿÿÿÿÿÿÿÿ";
+	uint8_t cr[9];
 	tableIndex %= NORFAT_TABLE_COUNT;
 	_FAT* fat = (_FAT*)fs->buff;
 	if (fs->read_block_device(
@@ -116,12 +148,11 @@ static int32_t validateTable(norFAT_FS* fs, uint32_t tableIndex, uint32_t* crc) 
 	if (j == NORFAT_SECTOR_SIZE) {
 		return NORFAT_TABLE_EMPTY;
 	}
-	crcRes = 0xFFFFFFFF;
 	j = findCrcIndex(fat);
 	memcpy(cr, &fat->commit[j], 8);
 	cr[8] = 0;
 	uint32_t crclen = sizeof(_FAT) - (sizeof(_commit) * (j + 1ULL));
-	crc32(&fat->commit[j + 1], crclen, &crcRes);
+	crcRes = NORFAT_CRC(&fs->fat->commit[j + 1], crclen, 0xFFFFFFFF);
 	if (crcRes != strtoul(cr, NULL, 0x10)) {
 		NORFAT_ERROR(("Table %i crc failure\r\n", tableIndex));
 		return NORFAT_TABLE_CRC;
@@ -219,7 +250,7 @@ static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 	uint8_t cr[9];
 	uint32_t crcRes;
 	uint32_t i;
-	uint32_t index = findCrcIndex(fs);
+	uint32_t index = findCrcIndex(fs->fat);
 	//Is current table set full?
 	if (index == NORFAT_CRC_COUNT - 1 || forceSwap) {
 		NORFAT_DEBUG(("Incrementing _FAT tables %i\r\n", fs->firstFAT));
@@ -230,8 +261,7 @@ static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 		fs->fat->swapCount++;
 		// Refresh the FAT table and calculate crc
 		memset(fs->fat->commit, 0xFF, sizeof(_commit) * NORFAT_CRC_COUNT);
-		crcRes = 0xFFFFFFFF;
-		crc32(&fs->fat->commit[1], sizeof(_FAT) - sizeof(_commit), &crcRes);
+		crcRes = NORFAT_CRC(&fs->fat->commit[1], sizeof(_FAT) - sizeof(_commit), 0xFFFFFFFF);
 		snprintf(cr, 9, "%08X", crcRes);
 		memcpy(&fs->fat->commit[0], cr, 8);
 
@@ -269,9 +299,8 @@ static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 	//CRC
 	NORFAT_ASSERT(index < NORFAT_CRC_COUNT - 1);
 	memset(&fs->fat->commit[index], 0, sizeof(_commit));
-	crcRes = 0xFFFFFFFF;
 	uint32_t crclen = sizeof(_FAT) - (sizeof(_commit) * (index + 2ULL));
-	crc32(&fs->fat->commit[index + 2], crclen, &crcRes);
+	crcRes = NORFAT_CRC(&fs->fat->commit[index + 2], crclen, 0xFFFFFFFF);
 	snprintf(cr, 9, "%08X", crcRes);
 	memcpy(&fs->fat->commit[index + 1], cr, 8);
 
@@ -289,9 +318,8 @@ static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 		(uint8_t*)fs->fat, NORFAT_SECTOR_SIZE)) {
 		return NORFAT_ERR_IO;
 	}
-	NORFAT_DEBUG(("_FAT tables %i %i commited crc addr 0x%X 0x%s len %i\r\n",
-		fs->firstFAT, ((fs->firstFAT + 1) % NORFAT_TABLE_COUNT), 
-		(uint32_t)&fs->fat->commit[index + 1], cr, crclen));
+	NORFAT_DEBUG(("_FAT tables %i %i commited crc 0x%X\r\n",
+		fs->firstFAT, ((fs->firstFAT + 1) % NORFAT_TABLE_COUNT), crcRes));
 	return NORFAT_OK;
 }
 
@@ -370,7 +398,7 @@ int32_t norfat_mount(norFAT_FS* fs) {
 				return res;
 			}
 			fs->firstFAT = ui;
-			NORFAT_DEBUG(("FAT tables %i %i loaded\r\n", ui, ui + 1));
+			NORFAT_DEBUG(("FAT tables %i %i loaded\r\n", ui, (ui + 1) % NORFAT_TABLE_COUNT));
 			tablesValid = 1;
 			break;
 		case 0x2032:/* |EMPTY|GOOD | BAD | EMPTY|*/
@@ -392,7 +420,7 @@ int32_t norfat_mount(norFAT_FS* fs) {
 				return res;
 			}
 			NORFAT_ASSERT(validateTable(fs, ui, NULL) == NORFAT_OK);//TODO: TEST and remove
-			NORFAT_DEBUG(("FAT table %i rebuilt from %i\r\n", ui, ui + 1));
+			NORFAT_DEBUG(("FAT table %i rebuilt from %i\r\n", ui, (ui + 1) % NORFAT_TABLE_COUNT));
 			tablesValid = 1;
 			break;
 		case 0x2002:/* |EMPTY|GOOD |GOOD |EMPTY| */
@@ -410,13 +438,13 @@ int32_t norfat_mount(norFAT_FS* fs) {
 			if (res) {
 				return res;
 			}
-			fs->firstFAT = ui + 2;
+			fs->firstFAT = (ui + 2) % NORFAT_TABLE_COUNT;
 			res = copyTable(fs, ui + 3, ui + 2);
 			if (res) {
 				return res;
 			}
 			NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
-			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", ui + 3, ui + 2));
+			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", (ui + 3) % NORFAT_TABLE_COUNT, (ui + 2) % NORFAT_TABLE_COUNT));
 			tablesValid = 1;
 			break;
 		case 0x2203:/* |EMPTY|EMPTY|GOOD | BAD |*/
@@ -428,13 +456,14 @@ int32_t norfat_mount(norFAT_FS* fs) {
 			if (res) {
 				return res;
 			}
-			fs->firstFAT = ui + 2;
+			fs->firstFAT = (ui + 2) % NORFAT_TABLE_COUNT;
 			res = copyTable(fs, ui + 3, ui + 2);
 			if (res) {
 				return res;
 			}
 			NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
-			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", ui + 3, ui + 2));
+			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", 
+				(ui + 3) % NORFAT_TABLE_COUNT, (ui + 2) % NORFAT_TABLE_COUNT));
 			tablesValid = 1;
 			break;
 			/* Inverse actions that mean we are on the wrong cog */
@@ -447,10 +476,10 @@ int32_t norfat_mount(norFAT_FS* fs) {
 		case 0x0223:
 		case 0x0222:
 		case 0x0322:
-			NORFAT_DEBUG(("Inverse, no action on %i\r\n", scenario));
+			NORFAT_DEBUG(("Inverse, no action on %04x\r\n", scenario));
 			break;
 		default:
-			NORFAT_DEBUG(("No suitable action for %04i\r\n", scenario));
+			NORFAT_DEBUG(("No suitable action for %04x\r\n", scenario));
 			NORFAT_ASSERT(0);
 			break;
 		}
@@ -484,7 +513,7 @@ int32_t norfat_mount(norFAT_FS* fs) {
 int32_t norfat_format(norFAT_FS* fs) {
 	uint32_t i, j;
 	uint8_t cr[9];
-	uint32_t crcRes = 0xFFFFFFFF;
+	uint32_t crcRes;
 	NORFAT_ASSERT(fs);
 	for (i = 0; i < NORFAT_TABLE_COUNT; i++) {
 		if (fs->read_block_device(
@@ -507,8 +536,7 @@ int32_t norfat_format(norFAT_FS* fs) {
 	memset(fs->fat, 0xFF, NORFAT_SECTOR_SIZE);
 	fs->fat->garbageCount = 0;
 	fs->fat->swapCount = 0;
-		//crc32(fs->fat, sizeof(_FAT) - (sizeof(_commit) * (j - 1)), &crcRes);
-	crc32(&fs->fat->commit[1], sizeof(_FAT) - sizeof(_commit), &crcRes);
+	crcRes = NORFAT_CRC(&fs->fat->commit[1], sizeof(_FAT) - sizeof(_commit), 0xFFFFFFFF);
 	snprintf(cr, 9, "%08X", crcRes);
 	memcpy(&fs->fat->commit[0], cr, 8);
 	if (fs->program_block_page(fs->addressStart, (uint8_t*)fs->fat,
@@ -815,7 +843,7 @@ int32_t norfat_fwrite(norFAT_FS* fs, norfat_FILE* file, uint8_t* out, uint32_t l
 		if (fs->program_block_page(fs->addressStart + blockAddress, fs->buff, blockWriteLength)) {
 			return NORFAT_ERR_IO;
 		}
-		crc32(out, DataLengthToWrite, &file->fh->crc);
+		file->fh->crc = NORFAT_CRC(out, DataLengthToWrite, file->fh->crc);
 		file->position += DataLengthToWrite;
 		file->rwPosInSector += DataLengthToWrite;
 		out += DataLengthToWrite;
