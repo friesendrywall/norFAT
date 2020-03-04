@@ -27,6 +27,12 @@
 #define NORFAT_EMPTY_MSK	(0xFFFF)
 #define NORFAT_IS_GARBAGE	(0)
 
+#define NORFAT_TABLE_GOOD	0
+#define NORFAT_TABLE_OLD	1
+#define NORFAT_TABLE_MOVE	2
+#define NORFAT_TABLE_EMPTY	3
+#define NORFAT_TABLE_CRC    4
+
 typedef union {
 	struct {
 		uint16_t next : 12;
