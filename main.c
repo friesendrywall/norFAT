@@ -19,11 +19,15 @@ uint32_t read_block_device(uint32_t address, uint8_t* data, uint32_t len) {
 			takeDownPeriod--;
 		}
 		else {
+			printf("Power failed at read 0x%X .......\r\n", address);
 			return 1;
 		}
 	}
 	if (address + len > BLOCK_SIZE) {
 		assert(0);
+	}
+	if (address < 0x4000) {
+		int a = 0;
 	}
 	//printf("Read 0x%X len 0x%X\r\n", address, len);
 	memcpy(data, &block[address], len);
@@ -39,8 +43,12 @@ uint32_t erase_block_sector(uint32_t address)
 			takeDownPeriod--;
 		}
 		else {
+			printf("Power failed at erase 0x%X .......\r\n", address);
 			return 1;
 		}
+	}
+	if (address < 0x4000) {
+		printf("...ERASE 0x%X\r\n", address);
 	}
 	EraseCounts[address / NORFAT_SECTOR_SIZE] ++;
 	if (address + NORFAT_SECTOR_SIZE > BLOCK_SIZE) {
@@ -58,8 +66,12 @@ uint32_t program_block_page(uint32_t address, uint8_t* data, uint32_t length)
 			takeDownPeriod--;
 		}
 		else {
+			printf("Power failed at Program 0x%X .......\r\n", address);
 			return 1;
 		}
+	}
+	if (address < 0x4000) {
+		printf("...PROGRAM 0x%X - 0x%X\r\n", address, length);
 	}
 	uint32_t i;
 	if (address + length > BLOCK_SIZE) {
@@ -94,7 +106,7 @@ void tests(norFAT_FS* fs) {
 	while (res == 0) {
 		powered = 1;
 		takeDownTest = 0;
-		takeDownPeriod = 10 + (rand() % 10);
+		takeDownPeriod = 10 + (rand() % 100);
 		printf("Mount attempt .......\r\n");
 		res = norfat_mount(fs);
 		if (res) {

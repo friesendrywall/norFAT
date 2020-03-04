@@ -124,7 +124,7 @@ static uint32_t loadTable(norFAT_FS* fs, uint32_t tableIndex) {
 		NORFAT_ERROR(("Table %i crc failure\r\n", tableIndex));
 		return NORFAT_ERR_CRC;
 	}
-	NORFAT_INFO(("Table %i crc match\r\n", tableIndex));
+	NORFAT_INFO(("Table %i crc match 0x%X\r\n", tableIndex, crcRes));
 	return NORFAT_OK;
 }
 
@@ -152,15 +152,15 @@ static int32_t validateTable(norFAT_FS* fs, uint32_t tableIndex, uint32_t* crc) 
 	memcpy(cr, &fat->commit[j], 8);
 	cr[8] = 0;
 	uint32_t crclen = sizeof(_FAT) - (sizeof(_commit) * (j + 1ULL));
-	crcRes = NORFAT_CRC(&fs->fat->commit[j + 1], crclen, 0xFFFFFFFF);
+	crcRes = NORFAT_CRC(&fat->commit[j + 1], crclen, 0xFFFFFFFF);
 	if (crcRes != strtoul(cr, NULL, 0x10)) {
-		NORFAT_ERROR(("Table %i crc failure\r\n", tableIndex));
+		NORFAT_ERROR(("Table %i crc[%i] 0x%X != 0x%s\r\n", tableIndex, j, crcRes, cr));
 		return NORFAT_TABLE_CRC;
 	}
 	if (crc) {
 		*crc = crcRes;
 	}
-	NORFAT_INFO(("Table %i crc match\r\n", tableIndex));
+	NORFAT_INFO(("Table %i crc[%i] match 0x%X\r\n", tableIndex, j, crcRes));
 	return res;
 }
 
@@ -291,7 +291,7 @@ static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 
 		fs->firstFAT += 2;
 		fs->firstFAT %= NORFAT_TABLE_COUNT;
-		NORFAT_DEBUG(("_FAT tables now at %i %ir\n", fs->firstFAT, ((fs->firstFAT + 1) % NORFAT_TABLE_COUNT)));
+		NORFAT_DEBUG(("_FAT tables now at %i %i crc[0] = 0x%X\n", fs->firstFAT, ((fs->firstFAT + 1) % NORFAT_TABLE_COUNT), crcRes));
 		return NORFAT_OK;
 	}
 	NORFAT_DEBUG(("Committing _FAT tables %i %i\r\n", fs->firstFAT, ((fs->firstFAT + 1) % NORFAT_TABLE_COUNT)));
@@ -310,19 +310,19 @@ static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 		fs->buff[i] &= fat[i];
 	}
 	if (fs->program_block_page(fs->addressStart +
-		(fs->firstFAT * NORFAT_SECTOR_SIZE), (uint8_t*)fs->fat, NORFAT_SECTOR_SIZE)) {
+		(fs->firstFAT * NORFAT_SECTOR_SIZE), fs->buff, NORFAT_SECTOR_SIZE)) {
 		return NORFAT_ERR_IO;
 	}
 	if (fs->program_block_page(fs->addressStart +
 		(((fs->firstFAT + 1) % NORFAT_TABLE_COUNT) * NORFAT_SECTOR_SIZE),
-		(uint8_t*)fs->fat, NORFAT_SECTOR_SIZE)) {
+		fs->buff, NORFAT_SECTOR_SIZE)) {
 		return NORFAT_ERR_IO;
 	}
-	NORFAT_DEBUG(("_FAT tables %i %i commited crc 0x%X\r\n",
-		fs->firstFAT, ((fs->firstFAT + 1) % NORFAT_TABLE_COUNT), crcRes));
+	NORFAT_DEBUG(("_FAT tables %i %i commited crc[%i] 0x%X\r\n",
+		fs->firstFAT, ((fs->firstFAT + 1) % NORFAT_TABLE_COUNT), index + 1, crcRes));
 	return NORFAT_OK;
 }
-
+uint32_t sclist[24];
 int32_t norfat_mount(norFAT_FS* fs) {
 	int32_t i, j;
 	uint32_t ui;
@@ -391,6 +391,16 @@ int32_t norfat_mount(norFAT_FS* fs) {
 		scenario += sectorState[(ui + 2) % NORFAT_TABLE_COUNT] << 4;
 		scenario += sectorState[(ui + 3) % NORFAT_TABLE_COUNT] << 0;
 		printf("Now presenting scenario %04X\r\n", scenario);
+		res = 0;
+		for (j = 0; j < 24; j++) {
+			if (sclist[j] == scenario) {
+				break;
+			}
+			else if (sclist[j] == 0) {
+				sclist[j] = scenario;
+				break;
+			}
+		}
 		switch (scenario) {
 		case 0x0022:/* |EMPTY|EMPTY|GOOD |GOOD | (ideal conditions) */
 			res = loadTable(fs, ui);
@@ -447,6 +457,8 @@ int32_t norfat_mount(norFAT_FS* fs) {
 			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", (ui + 3) % NORFAT_TABLE_COUNT, (ui + 2) % NORFAT_TABLE_COUNT));
 			tablesValid = 1;
 			break;
+		case 0x2201:/* |EMPTY|EMPTY|GOOD | OLD |*/
+			/* fallthrough */
 		case 0x2203:/* |EMPTY|EMPTY|GOOD | BAD |*/
 			res = eraseTable(fs, ui + 3);
 			if (res) {
@@ -476,6 +488,7 @@ int32_t norfat_mount(norFAT_FS* fs) {
 		case 0x0223:
 		case 0x0222:
 		case 0x0322:
+		case 0x0122:
 			NORFAT_DEBUG(("Inverse, no action on %04x\r\n", scenario));
 			break;
 		default:
@@ -502,7 +515,7 @@ int32_t norfat_mount(norFAT_FS* fs) {
 	}
 	/* scan for unclosed files */
 	if (scanTable(fs->fat)) {
-		commitChanges(fs, 0);
+		commitChanges(fs, 1);
 		NORFAT_DEBUG(("Tables repaired\r\n"));
 	}
 	fs->volumeMounted = 1;
@@ -527,7 +540,7 @@ int32_t norfat_format(norFAT_FS* fs) {
 			}
 		}
 		if (j != NORFAT_SECTOR_SIZE) {
-			if (fs->erase_block_sector(fs->addressStart + i)) {
+			if (fs->erase_block_sector(fs->addressStart + (i * NORFAT_SECTOR_SIZE))) {
 				return NORFAT_ERR_IO;
 			}
 		}
@@ -548,7 +561,7 @@ int32_t norfat_format(norFAT_FS* fs) {
 		return NORFAT_ERR_IO;
 	}
 	fs->firstFAT = 0;
-	NORFAT_DEBUG(("Volume formatted\r\n"));
+	NORFAT_DEBUG(("Volume formatted crc 0x%X\r\n", crcRes));
 	return 0;
 }
 
