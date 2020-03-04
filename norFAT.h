@@ -29,9 +29,8 @@
 
 #define NORFAT_TABLE_GOOD	0
 #define NORFAT_TABLE_OLD	1
-#define NORFAT_TABLE_MOVE	2
-#define NORFAT_TABLE_EMPTY	3
-#define NORFAT_TABLE_CRC    4
+#define NORFAT_TABLE_EMPTY	2
+#define NORFAT_TABLE_CRC    3
 
 typedef union {
 	struct {
@@ -54,8 +53,7 @@ typedef struct {
 	uint16_t garbageCount;
 	union {
 		struct {
-			uint32_t moving : 1;
-			uint32_t future : 31;
+			uint32_t future : 32;
 		};
 		uint32_t flags;
 	};

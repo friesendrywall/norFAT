@@ -46,6 +46,8 @@ static int32_t scanTable(_FAT * fat) {
 }
 
 static int32_t copyTable(norFAT_FS* fs, uint32_t toIndex, uint32_t fromIndex) {
+	toIndex %= NORFAT_TABLE_COUNT;
+	fromIndex %= NORFAT_TABLE_COUNT;
 	if (fs->read_block_device(
 		fs->addressStart + (NORFAT_SECTOR_SIZE * fromIndex),
 		(uint8_t*)fs->buff, NORFAT_SECTOR_SIZE)) {
@@ -78,11 +80,6 @@ static uint32_t loadTable(norFAT_FS* fs, uint32_t tableIndex) {
 		return NORFAT_ERR_IO;
 	}
 	crcRes = 0xFFFFFFFF;
-	// Allow to use this table in recovery
-	if (!fs->fat->moving) {
-		NORFAT_INFO(("Table %i was marked to move\r\n", tableIndex));
-		fs->fat->moving = 1;//May be valid, set so CRC will calculate
-	}
 	j = findCrcIndex(fs->fat);
 	NORFAT_DEBUG(("Using CRC location %i\r\n", j));
 	memcpy(cr, &fs->fat->commit[j], 8);
@@ -121,11 +118,6 @@ static int32_t validateTable(norFAT_FS* fs, uint32_t tableIndex, uint32_t* crc) 
 	}
 	crcRes = 0xFFFFFFFF;
 	j = findCrcIndex(fat);
-	if (!fat->moving) {
-		NORFAT_INFO(("Table %i was marking to move\r\n", tableIndex));
-		fat->moving = 1;//May be valid, set so CRC will calculate
-		res = NORFAT_TABLE_MOVE;
-	}
 	memcpy(cr, &fat->commit[j], 8);
 	cr[8] = 0;
 	uint32_t crclen = sizeof(_FAT) - (sizeof(_commit) * (j + 1ULL));
@@ -243,54 +235,27 @@ static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 		snprintf(cr, 9, "%08X", crcRes);
 		memcpy(&fs->fat->commit[0], cr, 8);
 
-		uint32_t markOffset = offsetof(_FAT, flags);
-		markOffset -= (markOffset % NORFAT_PAGE_SIZE);
-		memset(&fs->buff[markOffset], 0xFF, NORFAT_PAGE_SIZE);
-		_FAT* fat = (_FAT*)fs->buff;
-		fat->moving = 0;
-		//Mark #1 old block as moving
-		if (fs->program_block_page(fs->addressStart + markOffset +
-			(swap1old * NORFAT_SECTOR_SIZE), &fs->buff[markOffset], NORFAT_PAGE_SIZE)) {
-			return NORFAT_ERR_IO;
-		}
-#if 0 //Previously erased
-		//Erase #1 new block
-		if (fs->erase_block_sector(fs->addressStart +
-			(swap1new * NORFAT_SECTOR_SIZE))) {
-			return NORFAT_ERR_IO;
-		}
-#endif
-		//Program #1 new block
-		if (fs->program_block_page(fs->addressStart +
-			(swap1new * NORFAT_SECTOR_SIZE), (uint8_t*)fs->fat, NORFAT_SECTOR_SIZE)) {
-			return NORFAT_ERR_IO;
-		}
 		//Erase #1 old block
 		if (fs->erase_block_sector(fs->addressStart +
 			(swap1old * NORFAT_SECTOR_SIZE))) {
 			return NORFAT_ERR_IO;
 		}
 
-		//Mark #2 old block as moving
-		if (fs->program_block_page(fs->addressStart + markOffset +
-			(swap2old * NORFAT_SECTOR_SIZE), &fs->buff[markOffset], NORFAT_PAGE_SIZE)) {
-			return NORFAT_ERR_IO;
-		}
-#if 0 //Previously erased
-		//Erase #2 new block
-		if (fs->erase_block_sector(fs->addressStart +
-			(swap2new * NORFAT_SECTOR_SIZE))) {
-			return NORFAT_ERR_IO;
-		}
-#endif
-		//Program #2 new block
+		//Program #1 new block
 		if (fs->program_block_page(fs->addressStart +
-			(swap2new * NORFAT_SECTOR_SIZE), (uint8_t*)fs->fat, NORFAT_SECTOR_SIZE)) {
+			(swap1new * NORFAT_SECTOR_SIZE), (uint8_t*)fs->fat, NORFAT_SECTOR_SIZE)) {
 			return NORFAT_ERR_IO;
 		}
+
 		//Erase #2 old block
 		if (fs->erase_block_sector(fs->addressStart +
 			(swap2old * NORFAT_SECTOR_SIZE))) {
+			return NORFAT_ERR_IO;
+		}
+
+		//Program #2 new block
+		if (fs->program_block_page(fs->addressStart +
+			(swap2new * NORFAT_SECTOR_SIZE), (uint8_t*)fs->fat, NORFAT_SECTOR_SIZE)) {
 			return NORFAT_ERR_IO;
 		}
 
@@ -348,8 +313,7 @@ int32_t norfat_mount(norFAT_FS* fs) {
 	/* Scan tables for valid records */
 	for (i = 0; i < NORFAT_TABLE_COUNT; i++) {
 		sectorState[i] = validateTable(fs, i, &sectorCRC[i]);
-		if (sectorState[i] == NORFAT_TABLE_GOOD
-			|| sectorState[i] == NORFAT_TABLE_MOVE) {
+		if (sectorState[i] == NORFAT_TABLE_GOOD) {
 			empty = 0;
 		}
 		//Check old state
@@ -367,6 +331,7 @@ int32_t norfat_mount(norFAT_FS* fs) {
 		NORFAT_DEBUG(("Mounted volume is empty\r\n"));
 		return NORFAT_EMPTY;
 	}
+#if 0
 	/* Search through records until we find the first one following an empty location*/
 	j = 0;
 	for (i = 0; i < NORFAT_TABLE_COUNT * 2; i++) {
@@ -381,51 +346,42 @@ int32_t norfat_mount(norFAT_FS* fs) {
 			j = 1;
 		}
 	}
-	/* There are 5 states, Good, old, moving, empty, and bad 
+#endif
+	/* There are 4 states, Good, old, empty, and bad 
 	 * Tables are kept in mirrored copies in even pairs
 	 * Like 0-1, 2-3, etc. We never attempt to do any
 	 * repairs to a presently valid table.
 	 */
 	uint32_t res;
-	uint32_t tableReady = 0;
+	uint32_t tablesValid = 0;
 
 	for (ui = 0; ui < NORFAT_TABLE_COUNT; ui += 2) {
 		//Build a scenario
 		// |N|N|N|N|
-		scenario = sectorState[(ui - 2) % NORFAT_TABLE_COUNT] * 1000;
-		scenario += sectorState[(ui - 1) % NORFAT_TABLE_COUNT] * 100;
-		scenario += sectorState[(ui + 0) % NORFAT_TABLE_COUNT] * 10;
-		scenario += sectorState[(ui + 1) % NORFAT_TABLE_COUNT] * 1;
-		printf("Now presenting scenario %04i\r\n", scenario);
+		scenario = sectorState[ui] << 12;
+		scenario += sectorState[(ui + 1) % NORFAT_TABLE_COUNT] << 8;
+		scenario += sectorState[(ui + 2) % NORFAT_TABLE_COUNT] << 4;
+		scenario += sectorState[(ui + 3) % NORFAT_TABLE_COUNT] << 0;
+		printf("Now presenting scenario %04X\r\n", scenario);
 		switch (scenario) {
-		case 3300:/* |EMPTY|EMPTY|GOOD|GOOD| (ideal conditions) */
+		case 0x0022:/* |EMPTY|EMPTY|GOOD |GOOD | (ideal conditions) */
 			res = loadTable(fs, ui);
 			if (res) {
 				return res;
 			}
 			fs->firstFAT = ui;
 			NORFAT_DEBUG(("FAT tables %i %i loaded\r\n", ui, ui + 1));
+			tablesValid = 1;
 			break;
-		case 3301:/* |EMPTY|EMPTY|GOOD|OLD| (Update old table) */
-			res = loadTable(fs, ui);
+		case 0x2032:/* |EMPTY|GOOD | BAD | EMPTY|*/
+			res = eraseTable(fs, ui + 2);
 			if (res) {
 				return res;
 			}
-			fs->firstFAT = ui;
-			res = copyTable(fs, ui + 1, ui);
-			if (res) {
-				return res;
-			}
-			NORFAT_ASSERT(validateTable(fs, ui + 1, NULL) == NORFAT_OK);//TODO: TEST and remove
-			NORFAT_DEBUG(("FAT table %i updated\r\n", ui + 1));
-			break;
-		case 4320:/* | BAD |EMPTY|MOVE|GOOD| Roll back move */
-			res = eraseTable(fs, ui - 2);
-			if (res) {
-				return res;
-			}
-			/* fallthrough */
-		case 3320:/* |EMPTY|EMPTY|MOVE|GOOD| Roll back move */
+			/* fallthrough to finish up */
+		case 0x3022:/* | BAD |GOOD |EMPTY|EMPTY| (Re write table) */
+			/* fallthrough same treatment*/
+		case 0x2022:/* |EMPTY|GOOD |EMPTY|EMPTY| */
 			res = loadTable(fs, ui + 1);
 			if (res) {
 				return res;
@@ -436,109 +392,76 @@ int32_t norfat_mount(norFAT_FS* fs) {
 				return res;
 			}
 			NORFAT_ASSERT(validateTable(fs, ui, NULL) == NORFAT_OK);//TODO: TEST and remove
-			NORFAT_DEBUG(("FAT table %i rolled back\r\n", ui));
+			NORFAT_DEBUG(("FAT table %i rebuilt from %i\r\n", ui, ui + 1));
+			tablesValid = 1;
 			break;
-		default:
-			NORFAT_DEBUG(("No suitable action for %04i\r\n", scenario));
-			break;
-		}
-
-		if (tableReady) {
-			break;
-		}
-
-	}
-
-#if 0
-	/* Do we have two valid and equal non moving copies? */
-	/* |3|3|0|0| */
-	for (i = 0; i < NORFAT_TABLE_COUNT; i += 2) {
-		if (sectorState[i] == NORFAT_TABLE_GOOD &&
-			sectorState[i + 1] == NORFAT_TABLE_GOOD &&
-			sectorCRC[i] == sectorCRC[i + 1]) {
-			res = loadTable(fs, i);
+		case 0x2002:/* |EMPTY|GOOD |GOOD |EMPTY| */
+			//Delete the first good because its probably older
+			/* fallthrough */
+		case 0x2102:/* |EMPTY| OLD |GOOD |EMPTY| */
+			/* fallthrough */
+		case 0x2302:/* |EMPTY| BAD |GOOD |EMPTY| */
+			res = eraseTable(fs, ui + 1);
 			if (res) {
 				return res;
 			}
+		case 0x2202:/* |EMPTY|EMPTY|GOOD |EMPTY|*/
+			res = loadTable(fs, ui + 2);
+			if (res) {
+				return res;
+			}
+			fs->firstFAT = ui + 2;
+			res = copyTable(fs, ui + 3, ui + 2);
+			if (res) {
+				return res;
+			}
+			NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
+			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", ui + 3, ui + 2));
 			tablesValid = 1;
-			fs->firstFAT = i;
-			NORFAT_DEBUG(("FAT tables %i %i loaded\r\n", i, i + 1));
+			break;
+		case 0x2203:/* |EMPTY|EMPTY|GOOD | BAD |*/
+			res = eraseTable(fs, ui + 3);
+			if (res) {
+				return res;
+			}
+			res = loadTable(fs, ui + 2);
+			if (res) {
+				return res;
+			}
+			fs->firstFAT = ui + 2;
+			res = copyTable(fs, ui + 3, ui + 2);
+			if (res) {
+				return res;
+			}
+			NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
+			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", ui + 3, ui + 2));
+			tablesValid = 1;
+			break;
+			/* Inverse actions that mean we are on the wrong cog */
+		case 0x2200:
+		case 0x2220:
+		case 0x2230:
+		case 0x3220:
+		case 0x0220:
+		case 0x0221:
+		case 0x0223:
+		case 0x0222:
+		case 0x0322:
+			NORFAT_DEBUG(("Inverse, no action on %i\r\n", scenario));
+			break;
+		default:
+			NORFAT_DEBUG(("No suitable action for %04i\r\n", scenario));
+			NORFAT_ASSERT(0);
+			break;
 		}
-	}
-#endif
-	/* Do we have two valid and non equal non moving copies? */
-	/* |2|2|0|0-old| */
-	if (!tablesValid) {
-		for (i = 0; i < NORFAT_TABLE_COUNT; i += 2) {
-			if (sectorState[i] == NORFAT_TABLE_GOOD &&
-				sectorState[i + 1] == NORFAT_TABLE_GOOD) {
-				res = loadTable(fs, i);
-				if (res) {
-					return res;
-				}
-				tablesValid = 1;
-				fs->firstFAT = i;
-				NORFAT_DEBUG(("FAT tables %i %i loaded\r\n", i, i + 1));
-			}
-		}
-	}
-	/* Was one table corrupted? */
-	if (!tablesValid) {
-		for (i = 0; i < NORFAT_TABLE_COUNT; i += 2) {
-			if (sectorState[i] == NORFAT_TABLE_GOOD &&
-				sectorState[i + 1] == NORFAT_TABLE_CRC) {
-				NORFAT_DEBUG(("Repairing table %i\r\n", i + 1));
-				//Repair Second sector
-				res = copyTable(fs, i + 1, i);
-				if (res) {
-					return res;
-				}
-				NORFAT_ASSERT(validateTable(fs, i + 1, NULL) == NORFAT_OK);//TODO: TEST and remove
-				res = loadTable(fs, i);
-				if (res) {
-					return res;
-				}
-				tablesValid = 1;
-				fs->firstFAT = i;
-				NORFAT_DEBUG(("FAT tables %i %i loaded\r\n", i, i + 1));
-			}
-			else if (sectorState[i] == NORFAT_TABLE_CRC &&
-				sectorState[i + 1] == NORFAT_TABLE_GOOD) {
-				NORFAT_DEBUG(("Repairing table %i\r\n", i));
-				//Repair the first sector
-				res = copyTable(fs, i, i + 1);
-				if (res) {
-					return res;
-				}
-				NORFAT_ASSERT(validateTable(fs, i, NULL) == NORFAT_OK);//TODO: TEST and remove
-				res = loadTable(fs, i);
-				if (res) {
-					return res;
-				}
-				tablesValid = 1;
-				fs->firstFAT = i;
-				NORFAT_DEBUG(("FAT tables %i %i loaded\r\n", i, i + 1));
-			}
-		}
-	}
-	/* Was one being moved? */
-	if (!tablesValid) {
-		//If second one was moving, complete the move, otherwise cancel it.
-		for (i = 0; i < NORFAT_TABLE_COUNT; i += 2) {
-			if (sectorState[i] == NORFAT_TABLE_MOVE &&
-				sectorState[i + 1] == NORFAT_TABLE_GOOD) {
-				//Cancel the move
-			}
-			else if (sectorState[i] == NORFAT_TABLE_EMPTY &&
-				sectorState[i + 1] == NORFAT_TABLE_GOOD) {
 
-			}
-			else if (sectorState[i] == NORFAT_TABLE_EMPTY &&
-				sectorState[i + 1] == NORFAT_TABLE_MOVE) {
-
-			}
+		if (tablesValid) {
+			break;
 		}
+
 	}
+
+
 
 	/* If there are any valid tables left, use them */
 	if (!tablesValid) {
