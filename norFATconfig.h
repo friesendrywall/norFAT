@@ -12,7 +12,7 @@
 
 #define NORFAT_ASSERT(x) assert(x)
 
-#define NORFAT_DEBUG(x) printf x
+#define NORFAT_DEBUG(x) //printf x
 #define NORFAT_INFO(x) printf x
 #define NORFAT_ERROR(x) printf x
 #define NORFAT_VERBOSE(x) //printf x

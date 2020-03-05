@@ -3,34 +3,17 @@
 #include <stdint.h>
 #include "norFATconfig.h"
 
-#define NORFAT_FILE_NOT_FOUND (-1)
-#define NORFAT_INVALID_SECTOR (0xFFFFFFFF)
-
-#define NORFAT_FLAG_READ		1
-#define NORFAT_FLAG_WRITE		2
-#define NORFAT_FLAG_ZERO_COPY	4 //Not implemented for writes
-
-#define NORFAT_ERR_CORRUPT (-10)
+#define NORFAT_ERR_EMPTY			(-20)
+#define NORFAT_ERR_CORRUPT			(-10)
+#define NORFAT_ERR_MALLOC			(-8)
+#define NORFAT_ERR_FILE_NOT_FOUND	(-7)
+#define NORFAT_ERR_UNSUPPORTED		(-6)
 #define NORFAT_ERR_NULL (-5)
 #define NORFAT_ERR_NOFS (-4)
 #define NORFAT_ERR_FULL (-3)
 #define NORFAT_ERR_CRC	(-2)
 #define NORFAT_ERR_IO	(-1)
 #define NORFAT_OK		0
-#define NORFAT_EMPTY	(1)
-
-#define NORFAT_MAGIC 0xBEEF
-
-#define NORFAT_SOF_MSK		(0b0111000000000000)
-#define NORFAT_SOF_MATCH	(0b0011000000000000)
-#define NORFAT_EOF (0xFFF)
-#define NORFAT_EMPTY_MSK	(0xFFFF)
-#define NORFAT_IS_GARBAGE	(0)
-
-#define NORFAT_TABLE_GOOD	0
-#define NORFAT_TABLE_OLD	1
-#define NORFAT_TABLE_EMPTY	2
-#define NORFAT_TABLE_CRC    3
 
 typedef union {
 	struct {
@@ -71,6 +54,7 @@ typedef struct {
 	//Non userspace stuff
 	uint32_t firstFAT;
 	uint32_t volumeMounted;
+	int lastError;
 } norFAT_FS;
 
 typedef struct {
@@ -88,18 +72,21 @@ typedef struct {
 	int32_t currentSector;
 	uint32_t rwPosInSector;
 	uint32_t openFlags;
+	int lastError;
 	uint32_t zeroCopy : 1;
 	uint32_t error : 1;
 } norfat_FILE;
 
-int32_t norfat_mount(norFAT_FS* fs);
-int32_t norfat_format(norFAT_FS* fs);
-norfat_FILE* norfat_fopen(norFAT_FS* fs, uint8_t* filename, uint32_t flags);
-int32_t norfat_fclose(norFAT_FS* fs, norfat_FILE* file);
-int32_t norfat_fwrite(norFAT_FS* fs, norfat_FILE* file, uint8_t* out, uint32_t len);
-int32_t norfat_fread(norFAT_FS* fs, norfat_FILE* file, uint8_t* in, uint32_t len);
-int32_t norfat_remove(norFAT_FS* fs, const char * filename);
-int32_t norfat_flength(norfat_FILE* file);
-int32_t norfat_finfo(norFAT_FS* fs);
+int norfat_mount(norFAT_FS* fs);
+int norfat_format(norFAT_FS* fs);
+norfat_FILE* norfat_fopen(norFAT_FS* fs, const char* filename, const char* mode);
+int norfat_fclose(norFAT_FS* fs, norfat_FILE* stream);
+size_t norfat_fwrite(norFAT_FS* fs, const void* ptr, size_t size, size_t count, norfat_FILE* stream);
+size_t norfat_fread(norFAT_FS* fs, void* ptr, size_t size, size_t count, norfat_FILE* stream);
+int norfat_remove(norFAT_FS* fs, const char* filename);
+size_t norfat_flength(norfat_FILE* file);
+int norfat_finfo(norFAT_FS* fs);
+int norfat_ferror(norFAT_FS* fs, norfat_FILE* file);
+int norfat_errno(norFAT_FS* fs);
 
 #endif

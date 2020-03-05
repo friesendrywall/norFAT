@@ -26,9 +26,6 @@ uint32_t read_block_device(uint32_t address, uint8_t* data, uint32_t len) {
 	if (address + len > BLOCK_SIZE) {
 		assert(0);
 	}
-	if (address < 0x4000) {
-		int a = 0;
-	}
 	//printf("Read 0x%X len 0x%X\r\n", address, len);
 	memcpy(data, &block[address], len);
 	return 0;
@@ -46,9 +43,6 @@ uint32_t erase_block_sector(uint32_t address)
 			printf("Power failed at erase 0x%X .......\r\n", address);
 			return 1;
 		}
-	}
-	if (address < 0x4000) {
-		printf("...ERASE 0x%X\r\n", address);
 	}
 	EraseCounts[address / NORFAT_SECTOR_SIZE] ++;
 	if (address + NORFAT_SECTOR_SIZE > BLOCK_SIZE) {
@@ -70,9 +64,6 @@ uint32_t program_block_page(uint32_t address, uint8_t* data, uint32_t length)
 			return 1;
 		}
 	}
-	if (address < 0x4000) {
-		printf("...PROGRAM 0x%X - 0x%X\r\n", address, length);
-	}
 	uint32_t i;
 	if (address + length > BLOCK_SIZE) {
 		assert(0);
@@ -83,44 +74,70 @@ uint32_t program_block_page(uint32_t address, uint8_t* data, uint32_t length)
 	return 0;
 }
 
-int32_t fillUpTest(norFAT_FS* fs) {
-
-}
-
 void tests(norFAT_FS* fs) {
 	uint32_t i, j, tl, testLength, powered;
+	uint32_t cycles;
 	int32_t res = 0;
-	uint8_t * test = malloc(0x10000);
-	uint8_t * compare = malloc(0x10000);
+	uint8_t* test = malloc(0x10000);
+	uint8_t* validate = malloc(0x10000);
+	uint8_t* compare = malloc(0x10000);
 	uint8_t buf[128];
 	norfat_FILE* f;
 	assert(test);
 	assert(compare);
+	assert(validate);
 	srand((unsigned)time(NULL));
 	for (i = 0; i < 0x10000; i++) {
 		test[i] = rand();
 	}
+	for (i = 0; i < 0x10000; i++) {
+		validate[i] = rand();
+	}
 	res = i = 0;
 	res = norfat_format(fs);
-	
+	res = norfat_mount(fs);
+	f = norfat_fopen(fs, "validate.bin", "w");
+	res = norfat_fwrite(fs, validate, 1, 0x9988, f);
+	res = norfat_fclose(fs, f);
+	cycles = 10000;
 	while (res == 0) {
 		powered = 1;
 		takeDownTest = 0;
-		takeDownPeriod = 10 + (rand() % 100);
+		takeDownPeriod = 10 + (rand() % 2500);
 		printf("Mount attempt .......\r\n");
 		res = norfat_mount(fs);
 		if (res) {
 			printf("Failed %i\r\n", res);
+			break;
 		}
 		else {
 			printf("Mount success, work...\r\n");
 			//norfat_finfo(fs);
 		}
+		f = norfat_fopen(fs, "validate.bin", "r");
+		if (res || !f) {
+			printf("File Failed %i\r\n", res);
+			break;
+		}
+		res = norfat_fread(fs, compare, 1, 0x9988, f);
+		if (res != 0x9988) {
+			printf("File Failed %i\r\n", res);
+			break;
+		}
+		if (memcmp(compare, validate, 0x9988)) {
+			printf("File Failed\r\n");
+			break;
+		}
+		res = norfat_fclose(fs, f);
+		if (res) {
+			printf("File close Failed %i\r\n", res);
+			break;
+		}
 		takeDownTest = 1;
 		while (res == 0) {
 			//Save and stuff until it dies
 			sprintf(buf, "test%i.txt", i++ % 10);
-			f = norfat_fopen(fs, buf, NORFAT_FLAG_WRITE);
+			f = norfat_fopen(fs, buf, "w");
 			if (f == NULL) {
 				res = NORFAT_ERR_NULL;
 			}
@@ -138,7 +155,7 @@ void tests(norFAT_FS* fs) {
 				if (tl > j) {
 					tl = j;
 				}
-				res = norfat_fwrite(fs, f, &test[testLength - j], tl);
+				res = norfat_fwrite(fs, &test[testLength - j], 1, tl, f);
 				if (res) {
 					//norfat_fclose(fs, f);
 					break;
@@ -149,21 +166,27 @@ void tests(norFAT_FS* fs) {
 			res = norfat_fclose(fs, f);
 		}
 		if (res != NORFAT_ERR_IO) {
+			printf("Failed %i\r\n", res);
 			break;
 		}
 		res = 0;
+		if (cycles-- == 0) {
+			printf("Cycle test success\r\n");
+			break;
+		}
 	}
 	//Multiple open files with power cycles
 	//Plain power cycle failure resistance
 	//Random times
 	//Rollover
+	takeDownTest = 0;
 	res = norfat_format(fs);
 	res = norfat_mount(fs);
 	res = 0;
 	i = 0;
 	while (res == 0) {
 		sprintf(buf, "test%i.txt", i++ % 10);
-		f = norfat_fopen(fs, buf, NORFAT_FLAG_WRITE);
+		f = norfat_fopen(fs, buf, "w");
 		if (f == NULL) {
 			res = NORFAT_ERR_NULL;
 		}
@@ -181,7 +204,7 @@ void tests(norFAT_FS* fs) {
 			if (tl > j) {
 				tl = j;
 			}
-			res = norfat_fwrite(fs, f, &test[testLength - j], tl);
+			res = norfat_fwrite(fs, &test[testLength - j], 1, tl, f);
 			if (res) {
 				//norfat_fclose(fs, f);
 				break;
@@ -193,12 +216,12 @@ void tests(norFAT_FS* fs) {
 		if (fs->fat->swapCount > 10) {
 			break;
 		}
-		f = norfat_fopen(fs, buf, NORFAT_FLAG_READ);
+		f = norfat_fopen(fs, buf, "r");
 		if (f == NULL) {
 			res = NORFAT_ERR_NULL;
 		}
 		else {
-			res = norfat_fread(fs, f, compare, testLength);
+			res = norfat_fread(fs, compare, 1, testLength, f);
 			if (res != testLength) {
 				norfat_fclose(fs, f);
 				printf("Test file did not read\r\n");
@@ -234,11 +257,11 @@ void tests(norFAT_FS* fs) {
 	i = 0;
 	while (res == 0) {
 		sprintf(buf, "test%i.txt", i++);
-		f = norfat_fopen(fs, buf, NORFAT_FLAG_WRITE);
+		f = norfat_fopen(fs, buf, "w");
 		if (f == NULL) {
 			res = NORFAT_ERR_NULL;
 		}
-		res = norfat_fwrite(fs, f, test, (test[i]<<8) + test[i]);
+		res = norfat_fwrite(fs, test, 1, (test[i] << 8) + test[i], f);
 		if (res) {
 			norfat_fclose(fs, f);
 			break;
@@ -261,12 +284,6 @@ void tests(norFAT_FS* fs) {
 
 int main(int argv, char** argc) {
 
-	uint32_t i;
-	uint8_t test[16384];
-	uint8_t compare[16384];
-	for (i = 0; i < sizeof(test); i++) {
-		test[i] = rand();
-	}
 	norFAT_FS fs = {
 		.addressStart = 0,
 		.flashSize = BLOCK_SIZE
@@ -278,46 +295,10 @@ int main(int argv, char** argc) {
 	fs.buff = malloc(NORFAT_SECTOR_SIZE);
 	fs.fat = malloc(NORFAT_SECTOR_SIZE);
 	int32_t res = norfat_mount(&fs);
-	if (res == NORFAT_EMPTY) {
+	if (res == NORFAT_ERR_EMPTY) {
 		res = norfat_format(&fs);
 		res = norfat_mount(&fs);
 	}
 	tests(&fs);
-	/*
-	norfat_FILE* f = norfat_fopen(&fs, "Test.json", NORFAT_FLAG_WRITE);
-	res = norfat_fwrite(&fs, f, "Hello world!", 12);
-	res = norfat_fclose(&fs, f);
-
-	f = norfat_fopen(&fs, "Test.json", NORFAT_FLAG_WRITE);
-	res = norfat_fwrite(&fs, f, test, 9000);
-	res = norfat_fclose(&fs, f);
-
-	f = norfat_fopen(&fs, "Test.json", NORFAT_FLAG_READ);
-
-	res = norfat_fread(&fs, f, compare, 9000);
-	if (memcmp(test, compare, 9000)) {
-		printf("Test failure\r\n");
-	}
-	else {
-		printf("Test Success\r\n");
-	}	
-	norfat_finfo(&fs);
-	for (i = 0; i < sizeof(test); i++) {
-		test[i] = rand();
-	}
-	f = norfat_fopen(&fs, "Test.json", NORFAT_FLAG_WRITE);
-	res = norfat_fwrite(&fs, f, test, 9500);
-	res = norfat_fclose(&fs, f);
-
-	f = norfat_fopen(&fs, "Test.json", NORFAT_FLAG_READ);
-
-	res = norfat_fread(&fs, f, compare, 9500);
-	if (memcmp(test, compare, 9500)) {
-		printf("Test failure\r\n");
-	}
-	else {
-		printf("Test Success\r\n");
-	}
-	norfat_finfo(&fs);*/
 	return 1;
 }
