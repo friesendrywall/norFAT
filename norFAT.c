@@ -435,7 +435,7 @@ int norfat_mount(norFAT_FS* fs) {
 			if (res) {
 				return res;
 			}
-			NORFAT_ASSERT(validateTable(fs, ui, NULL) == NORFAT_OK);//TODO: TEST and remove
+			//NORFAT_ASSERT(validateTable(fs, ui, NULL) == NORFAT_OK);//TODO: TEST and remove
 			NORFAT_DEBUG(("FAT table %i rebuilt from %i\r\n", ui, (ui + 1) % NORFAT_TABLE_COUNT));
 			tablesValid = 1;
 			break;
@@ -459,7 +459,7 @@ int norfat_mount(norFAT_FS* fs) {
 			if (res) {
 				return res;
 			}
-			NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
+			//NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
 			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", (ui + 3) % NORFAT_TABLE_COUNT, (ui + 2) % NORFAT_TABLE_COUNT));
 			tablesValid = 1;
 			break;
@@ -479,7 +479,7 @@ int norfat_mount(norFAT_FS* fs) {
 			if (res) {
 				return res;
 			}
-			NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
+			//NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
 			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", 
 				(ui + 3) % NORFAT_TABLE_COUNT, (ui + 2) % NORFAT_TABLE_COUNT));
 			tablesValid = 1;
@@ -502,7 +502,7 @@ int norfat_mount(norFAT_FS* fs) {
 			NORFAT_ASSERT(0);
 			break;
 		}
-
+		//Need to add 0x3032
 		if (tablesValid) {
 			break;
 		}
