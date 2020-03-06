@@ -10,15 +10,24 @@
 #define NORFAT_PAGE_SIZE	256
 #define NORFAT_MAX_FILENAME   32
 
-#define NORFAT_ASSERT(x) assert(x)
+
 
 #define NORFAT_DEBUG(x) //printf x
 #define NORFAT_INFO(x) //printf x
 #define NORFAT_ERROR(x) //printf x
-#define NORFAT_VERBOSE(x) //printf x
+#define NORFAT_INFO_PRINT(x) printf x
+//#define NORFAT_VERBOSE(x) //printf x
+
+int traceHandler(const char* format, ...);
+#define NORFAT_TRACE(x) traceHandler x
 
 #define NORFAT_MALLOC(x) malloc(x)
 #define NORFAT_FREE(x) free(x)
+#define NORFAT_RAND rand
 
+void assertHandler(char* file, int line);
+#define NORFAT_ASSERT(expr) \
+ if (!(expr)) \
+        assertHandler(__FILE__, __LINE__)
 
 #endif

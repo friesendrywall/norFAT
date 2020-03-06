@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "norFATconfig.h"
 
+#define NORFAT_VERSION "1.00"
 #define NORFAT_ERR_EMPTY			(-20)
 #define NORFAT_ERR_CORRUPT			(-10)
 #define NORFAT_ERR_MALLOC			(-8)
