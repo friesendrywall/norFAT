@@ -16,6 +16,10 @@
 #define NORFAT_ERR_IO	(-1)
 #define NORFAT_OK		0
 
+#ifndef NORFAT_MAX_TABLES
+#define NORFAT_MAX_TABLES 16
+#endif
+
 typedef union {
 	struct {
 		uint16_t next : 12;
@@ -47,10 +51,13 @@ typedef struct {
 typedef struct {
 	const uint32_t addressStart;
 	const uint32_t flashSectors;
+	const uint32_t sectorSize;
+	const uint32_t programSize;
 	const uint32_t tableCount;//FAT tables carved out of flash sectors
-
+	/* buff is used for all IO, so if driver uses DMA, allocate accordingly */
 	uint8_t* buff;//User allocated to NORFAT_SECTOR_SIZE
-	_FAT* fat;//User allocated cache area
+	/* fat is used to store the working copy of the table */
+	_FAT* fat;//User allocated to NORFAT_SECTOR_SIZE
 	uint32_t(*read_block_device)(uint32_t address, uint8_t* data, uint32_t len);
 	uint32_t(*erase_block_sector)(uint32_t address);
 	uint32_t(*program_block_page)(uint32_t address, uint8_t* data, uint32_t length);

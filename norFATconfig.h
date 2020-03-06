@@ -3,16 +3,12 @@
 
 #include <assert.h>
 
-#define NORFAT_TABLE_COUNT	    4
-#define NORFAT_PAGE_SIZE	    256
-
 #define NORFAT_SECTORS		    1024
+
 #define NORFAT_CRC_COUNT	    255	
 #define NORFAT_SECTOR_SIZE	    4096
 
 #define NORFAT_MAX_FILENAME     64
-
-
 
 #define NORFAT_DEBUG(x) //printf x
 #define NORFAT_INFO(x) //printf x

@@ -1,9 +1,28 @@
 # norFAT
-FAT style wear leveling NOR flash flat file system
+FAT style wear leveling NOR flash flat file system with posix like calls.
 
 ## Goals
 
-The goal of this project is a fail safe, wear leveling file system built on NOR flash. However, the file system is intended to be neither full featured nor thread safe at this point.  It is primarily intended to ease configuration management in higher level 32 bit embedded MCU's like the STM32 or PIC32 series.
+The goal of this project is a fail safe, wear leveling file system built on NOR flash. 
+However, the file system is intended to be neither full featured nor thread safe at 
+this point.  It is primarily intended to ease configuration management in 
+higher level 32 bit embedded MCU's like the STM32 or PIC32 series.
+
+## Integration
+Add your block IO routines etc.
+```
+	norFAT_FS fs = {
+		.addressStart = 0,
+		.tableCount = 6,//3 fat table pairs carved from flash space
+		.flashSectors = 1024,
+		.sectorSize = 4096,//Erase block size
+		.programSize = 256,//Program page size
+		.erase_block_sector = erase_block_sector,
+		.program_block_page = program_block_page,
+		.read_block_device = read_block_device
+	};
+	int res = norfat_mount(&fs);
+```
 
 ## Details
 

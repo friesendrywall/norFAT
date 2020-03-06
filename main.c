@@ -574,17 +574,20 @@ int runTestSuite(norFAT_FS* fs) {
 int main(int argv, char** argc) {
 
 	norFAT_FS fs = {
-		.addressStart = 0,
-		.flashSize = BLOCK_SIZE
+		.addressStart = 0,//Now used
+		.tableCount = 6,//Now used
+		.flashSectors = 1024,
+		.sectorSize = 4096,
+		.programSize = 256,//Now used
+		.erase_block_sector = erase_block_sector,
+		.program_block_page = program_block_page,
+		.read_block_device = read_block_device
 	};
 	printf("norFAT test jig 1.00, norFAT Version %s\r\n", NORFAT_VERSION);
 	if (argv > 1) {
 		POWER_CYCLE_COUNT = strtol(argc[1], NULL, 10);
 		printf("Testing cycles set to %i\r\n", POWER_CYCLE_COUNT);
 	}
-	fs.erase_block_sector = erase_block_sector;
-	fs.program_block_page = program_block_page;
-	fs.read_block_device = read_block_device;
 	memset(block, 0xFF, BLOCK_SIZE);
 	fs.buff = malloc(NORFAT_SECTOR_SIZE);
 	fs.fat = malloc(NORFAT_SECTOR_SIZE);
