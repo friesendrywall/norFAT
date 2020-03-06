@@ -59,26 +59,6 @@ void init_crc32(void) {
 
 #endif
 
-#if 0
-uint32_t crc32_table[256];
-
-
-uint32_t crc32_for_byte(uint32_t r) {
-	for (int j = 0; j < 8; ++j)
-		r = (r & 1 ? 0 : (uint32_t)0xEDB88320L) ^ r >> 1;
-	return r ^ (uint32_t)0xFF000000L;
-}
-
-void crc32(const void* data, size_t n_bytes, uint32_t* crc) {
-	static uint32_t table[0x100];
-	if (!*table)
-		for (size_t i = 0; i < 0x100; ++i)
-			table[i] = crc32_for_byte(i);
-	for (size_t i = 0; i < n_bytes; ++i)
-		* crc = table[(uint8_t)* crc ^ ((uint8_t*)data)[i]] ^ *crc >> 8;
-}
-#endif
-
 static uint32_t findCrcIndex(_FAT* fat) {
 	uint32_t i;
 	for (i = NORFAT_CRC_COUNT - 1; i > 0; i--) {
@@ -400,7 +380,7 @@ static int commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 }
 
 int norfat_mount(norFAT_FS* fs) {
-	int32_t i, j;
+	int32_t i;
 	uint32_t ui;
 	int32_t empty = 1;
 	uint16_t blank = 0xFFFF;
@@ -415,6 +395,7 @@ int norfat_mount(norFAT_FS* fs) {
 	NORFAT_ASSERT(fs->fat);
 	NORFAT_ASSERT(fs->buff);
 	NORFAT_ASSERT(sizeof(_FAT) == NORFAT_SECTOR_SIZE);
+	NORFAT_ASSERT(sizeof(norFAT_fileHeader) < NORFAT_PAGE_SIZE);
 	fs->lastError = NORFAT_OK;
 	/* Scan tables for valid records */
 	for (i = 0; i < NORFAT_TABLE_COUNT; i++) {
@@ -511,8 +492,8 @@ int norfat_mount(norFAT_FS* fs) {
 			if (res) {
 				return res;
 			}
-			//NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
-			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", (ui + 3) % NORFAT_TABLE_COUNT, (ui + 2) % NORFAT_TABLE_COUNT));
+			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", 
+				(ui + 3) % NORFAT_TABLE_COUNT, (ui + 2) % NORFAT_TABLE_COUNT));
 			NORFAT_TRACE(("norfat_mount:0x%04X|ui %i\r\n", scenario, ui));
 			tablesValid = 1;
 			break;
@@ -532,7 +513,6 @@ int norfat_mount(norFAT_FS* fs) {
 			if (res) {
 				return res;
 			}
-			//NORFAT_ASSERT(validateTable(fs, ui + 3, NULL) == NORFAT_OK);//TODO: TEST and remove
 			NORFAT_DEBUG(("FAT table %i updated from %i\r\n", 
 				(ui + 3) % NORFAT_TABLE_COUNT, (ui + 2) % NORFAT_TABLE_COUNT));
 			NORFAT_TRACE(("norfat_mount:0x%04X|ui %i\r\n", scenario, ui));
@@ -558,7 +538,6 @@ int norfat_mount(norFAT_FS* fs) {
 			NORFAT_ASSERT(0);
 			break;
 		}
-		//Need to add 0x3032
 		if (tablesValid) {
 			break;
 		}
@@ -708,7 +687,7 @@ int norfat_format(norFAT_FS* fs) {
 	return 0;
 }
 
-int norfat_finfo(norFAT_FS* fs) {
+int norfat_fsinfo(norFAT_FS* fs) {
 	NORFAT_ASSERT(fs);
 	NORFAT_ASSERT(fs->volumeMounted);
 	uint32_t i;
@@ -988,12 +967,12 @@ int norfat_fclose(norFAT_FS* fs, norfat_FILE* stream) {
 	}
 	ret = commitChanges(fs, 0);
 	if (ret) {
-		NORFAT_DEBUG(("FILE %s committed\r\n", stream->fh->fileName));
-		NORFAT_TRACE(("norfat_fclose(%s):committed\r\n", stream->fh->fileName));
-	}
-	else {
 		NORFAT_DEBUG(("FILE %s commit failed\r\n", stream->fh->fileName));
 		NORFAT_TRACE(("norfat_fclose(%s):commit failed\r\n", stream->fh->fileName));
+	}
+	else {
+		NORFAT_DEBUG(("FILE %s committed\r\n", stream->fh->fileName));
+		NORFAT_TRACE(("norfat_fclose(%s):committed\r\n", stream->fh->fileName));
 	}
 
 finalize:
@@ -1018,6 +997,7 @@ size_t norfat_fwrite(norFAT_FS* fs, const void* ptr, size_t size, size_t count, 
 	NORFAT_ASSERT(fs->volumeMounted);
 	NORFAT_ASSERT(stream);
 	NORFAT_ASSERT(stream->openFlags & NORFAT_FLAG_WRITE);
+	NORFAT_ASSERT(size * count > 0);
 	if (stream->currentSector == -1) {
 		stream->currentSector = findEmptySector(fs);
 		if (stream->currentSector == NORFAT_ERR_FULL) {
@@ -1107,8 +1087,8 @@ size_t norfat_fwrite(norFAT_FS* fs, const void* ptr, size_t size, size_t count, 
 		out += DataLengthToWrite;
 		len -= DataLengthToWrite;
 	}
-	NORFAT_TRACE(("norfat_fwrite:wrote %i\r\n", len));
-	return len;
+	NORFAT_TRACE(("norfat_fwrite:wrote %i\r\n", (size * count)));
+	return (size * count);
 }
 
 size_t norfat_fread(norFAT_FS* fs, void* ptr, size_t size, size_t count, norfat_FILE* stream) {
@@ -1223,6 +1203,25 @@ int norfat_remove(norFAT_FS* fs, const char* filename) {
 finalize:
 	NORFAT_FREE(f);
 	NORFAT_TRACE(("norfat_remove:finalize\r\n"));
+	return ret;
+}
+
+int norfat_exists(norFAT_FS* fs, const char* filename) {
+	uint32_t sector;
+	uint32_t flags;
+	int ret = 0;
+	NORFAT_ASSERT(fs);
+	NORFAT_ASSERT(fs->volumeMounted);
+	NORFAT_TRACE(("norfat_exists(%s)\r\n", filename));
+	norFAT_fileHeader* f = fileSearch(fs, filename, &sector);
+
+	if (f) {
+		ret = f->fileLen;
+		free(f);
+	}
+	else {
+		ret = fs->lastError;
+	}
 	return ret;
 }
 

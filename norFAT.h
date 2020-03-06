@@ -42,11 +42,13 @@ typedef struct {
 		uint32_t flags;
 	};
 	_sector sector[NORFAT_SECTORS];
-} _FAT;/* must equal minimum sector size */
+} _FAT;/* must equal sector size */
 
 typedef struct {
 	const uint32_t addressStart;
-	const uint32_t flashSize;
+	const uint32_t flashSectors;
+	const uint32_t tableCount;//FAT tables carved out of flash sectors
+
 	uint8_t* buff;//User allocated to NORFAT_SECTOR_SIZE
 	_FAT* fat;//User allocated cache area
 	uint32_t(*read_block_device)(uint32_t address, uint8_t* data, uint32_t len);
@@ -86,7 +88,15 @@ size_t norfat_fwrite(norFAT_FS* fs, const void* ptr, size_t size, size_t count, 
 size_t norfat_fread(norFAT_FS* fs, void* ptr, size_t size, size_t count, norfat_FILE* stream);
 int norfat_remove(norFAT_FS* fs, const char* filename);
 size_t norfat_flength(norfat_FILE* file);
-int norfat_finfo(norFAT_FS* fs);
+int norfat_fsinfo(norFAT_FS* fs);
+
+/* norfat_exists()
+ * Returns:
+ * < 0 error 
+ * 0 = File not found
+ * > 0 File length
+ */
+int norfat_exists(norFAT_FS* fs, const char* filename);
 int norfat_ferror(norFAT_FS* fs, norfat_FILE* file);
 int norfat_errno(norFAT_FS* fs);
 

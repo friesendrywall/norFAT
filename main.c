@@ -1,3 +1,4 @@
+#define _CRT_RAND_S 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -87,7 +88,7 @@ uint32_t program_block_page(uint32_t address, uint8_t* data, uint32_t length)
 }
 
 static uint32_t getRand(void) {
-	uint32_t ret, a;
+	uint32_t ret, a = 0;
 	if (rand_s(&ret) == EINVAL) {
 #ifdef _DEBUG
 		while (1) {
@@ -239,6 +240,9 @@ int PowerStressTest(norFAT_FS* fs) {
 				if (tl > j) {
 					tl = j;
 				}
+				if (!tl) {
+					tl++;
+				}
 				res = norfat_fwrite(fs, &test[testLength - j], 1, tl, f);
 				if (res != tl) {
 					if (res == 0) {
@@ -262,7 +266,7 @@ int PowerStressTest(norFAT_FS* fs) {
 		}
 		res = 0;
 		if (cycles-- == 0) {
-			printf("\r\nPower stress test success\r\n");
+			printf("\r\nPower stress test passed\r\n");
 			break;
 		}
 	}
@@ -274,12 +278,12 @@ int PowerStressTest(norFAT_FS* fs) {
 	if (res) {
 		printf("Mount failed err %i\r\n", res);
 	}
-	res = norfat_finfo(fs);
+	res = norfat_fsinfo(fs);
 	return res;
 }
 
 int fillupTest(norFAT_FS* fs) {
-	uint32_t i, j, tl, testLength, powered;
+	uint32_t i, j;
 	uint32_t cycles;
 	int32_t res = 0;
 	uint8_t* test = malloc(0x10000);
@@ -302,8 +306,12 @@ int fillupTest(norFAT_FS* fs) {
 		if (f == NULL) {
 			res = NORFAT_ERR_NULL;
 		}
-		res = norfat_fwrite(fs, test, 1, (test[i] << 8) + test[i], f);
-		if (res) {
+		uint32_t wl = (test[i] << 8) + test[i];
+		if (!wl) {
+			wl = 1;
+		}
+		res = norfat_fwrite(fs, test, 1, wl, f);
+		if (res <= 0) {
 			norfat_fclose(fs, f);
 			break;
 		}
@@ -315,7 +323,7 @@ int fillupTest(norFAT_FS* fs) {
 		return 1;
 	}
 	else {
-		printf("Fill up test success\r\n");
+		printf("Fill up test passed\r\n");
 		return 0;
 	}
 
@@ -324,7 +332,6 @@ int fillupTest(norFAT_FS* fs) {
 
 int randomWriteLengths(norFAT_FS* fs) {
 	uint32_t i, j, tl, testLength;
-	uint32_t cycles;
 	int32_t res = 0;
 	uint8_t* test = malloc(0x10000);
 	uint8_t* compare = malloc(0x10000);
@@ -368,7 +375,7 @@ int randomWriteLengths(norFAT_FS* fs) {
 				tl = j;
 			}
 			res = norfat_fwrite(fs, &test[testLength - j], 1, tl, f);
-			if (res) {
+			if (res != tl) {
 				//norfat_fclose(fs, f);
 				break;
 			}
@@ -412,7 +419,7 @@ int randomWriteLengths(norFAT_FS* fs) {
 	}
 	else {
 		printf("\r\n");
-		norfat_finfo(fs);
+		norfat_fsinfo(fs);
 		printf("\r\nRollover test succeeded\r\n");
 		return 0;
 	}
@@ -422,8 +429,8 @@ int randomWriteLengths(norFAT_FS* fs) {
 int wearLeveling(norFAT_FS* fs) {
 	int i, j;
 	uint64_t val;
-	int min = 10000;
-	int max = 0;
+	uint32_t min = 1000000;
+	uint32_t max = 0;
 	int minIndex = 0;
 	int maxIndex = 0;
 	for (i = 0; i < NORFAT_SECTORS; i++) {
@@ -493,6 +500,41 @@ int wearLeveling(norFAT_FS* fs) {
 	return 0;
 }
 
+int deleteTest(norFAT_FS* fs) {
+	int res;
+	norfat_FILE* f;
+	res = norfat_format(fs);
+	res = norfat_mount(fs);
+	f = norfat_fopen(fs, "testfile.bin", "wb");
+	if (f == NULL) {
+		return 1;
+	}
+	res = norfat_fwrite(fs, "Hello world!", 1, 12, f);
+	if (res != 12) {
+		norfat_fclose(fs, f);
+		return 1;
+	}
+	res = norfat_fclose(fs, f);
+	if (res) {
+		return 1;
+	}
+	if (norfat_exists(fs, "testfile.bin") != 12) {
+		printf("File doesn't exist where it should\r\n");
+		return 1;
+	}
+	res = norfat_remove(fs, "testfile.bin");
+	if (res) {
+		printf("File remove error\r\n");
+		return 1;
+	}
+	if (norfat_exists(fs, "testfile.bin") != 0) {
+		printf("File exists where it shouldn't\r\n");
+		return 1;
+	}
+	printf("File remove test passed\r\n");
+	return 0;
+}
+
 int runTestSuite(norFAT_FS* fs) {
 	int res;
 	res = PowerStressTest(fs);
@@ -501,6 +543,13 @@ int runTestSuite(norFAT_FS* fs) {
 		writeTraceToFile();
 		return res;
 	}
+	res = deleteTest(fs);
+	if (res) {
+		printf("Delete test err %i\r\n", res);
+		writeTraceToFile();
+		return res;
+	}
+
 	res = fillupTest(fs);
 	if (res) {
 		printf("Fill up test err %i\r\n", res);
