@@ -6,6 +6,9 @@
 
 #include "norFAT.h"
 
+#define NORFAT_SECTORS		    1024
+#define NORFAT_SECTOR_SIZE	    4096
+
 #define TRACE_BUFFER_SIZE (10 * 1024 * 1024)
 uint32_t POWER_CYCLE_COUNT = 1000;
 #define BLOCK_SIZE (NORFAT_SECTORS * NORFAT_SECTOR_SIZE)
@@ -147,6 +150,78 @@ void assertHandler(char* file, int line) {
 	exit(1);
 #endif
 
+}
+
+int PowerFailOnWriteTest(norFAT_FS* fs) {
+	uint32_t i, j, tl, testLength, powered;
+	uint32_t rnd = 0;
+	int32_t res = 0;
+	uint8_t* validate = malloc(0x10000);
+	uint8_t* newwrite = malloc(0x10000);
+	uint8_t* compare = malloc(0x10000);
+	uint8_t buf[128];
+	norfat_FILE* f;
+	assert(compare);
+	assert(validate);
+	assert(newwrite);
+	srand((unsigned)time(NULL));
+	j = 0;
+	for (i = 0; i < 0x10000; i++) {
+		validate[i] = (uint8_t)getRand();
+		newwrite[i] = (uint8_t)getRand();
+	}
+	res = i = 0;
+	res = norfat_format(fs);
+	res = norfat_mount(fs);
+	f = norfat_fopen(fs, "validate.bin", "w");
+	res = norfat_fwrite(fs, validate, 1, 0x9988, f);
+	res = norfat_fclose(fs, f);
+
+	res = norfat_mount(fs);
+	if (res) {
+		printf("Mount failed err %i\r\n", res);
+		goto finalize;
+	}
+	//Write halfway
+	if (memcmp(compare, newwrite, 0x9988) == 0) {
+		printf("What!!?\r\n");
+		res = 1;
+		goto finalize;
+	}
+	f = norfat_fopen(fs, "validate.bin", "w");
+	res = norfat_fwrite(fs, newwrite, 1, 0x8000, f);
+	//Power failure here.
+	res = norfat_mount(fs);
+	f = norfat_fopen(fs, "validate.bin", "r");
+	if (!f) {
+		printf("File open failure\r\n");
+		res = 1;
+		goto finalize;
+	}
+	res = norfat_fread(fs, compare, 1, 0x9988, f);
+	if (res != 0x9988) {
+		printf("File Failed %i\r\n", res);
+		if (res == 0) {
+			res = norfat_ferror(fs, f);
+		}
+		goto finalize;;
+	}
+	if (memcmp(compare, validate, 0x9988)) {
+		printf("File Failed\r\n");
+		res = 1;
+		goto finalize;
+	}
+	res = norfat_fclose(fs, f);
+	if (res) {
+		printf("File close Failed %i\r\n", res);
+		goto finalize;
+	}
+	printf("Half write test passed\r\n");
+finalize:
+	free(newwrite);
+	free(validate);
+	free(compare);
+	return res;
 }
 
 int PowerStressTest(norFAT_FS* fs) {
@@ -536,8 +611,8 @@ int deleteTest(norFAT_FS* fs) {
 }
 
 int runTestSuite(norFAT_FS* fs) {
-	int res;
-	res = PowerStressTest(fs);
+	int res = 0;
+	//res = PowerStressTest(fs);
 	if (res) {
 		printf("Power cycle stress test failed err %i\r\n", res);
 		writeTraceToFile();
@@ -568,17 +643,26 @@ int runTestSuite(norFAT_FS* fs) {
 		writeTraceToFile();
 		return res;
 	}
+
+	res = PowerFailOnWriteTest(fs);
+	if (res) {
+		printf("Half write test failed %i\r\n", res);
+		writeTraceToFile();
+		return res;
+	}
+	printf("Passed all tests\r\n");
 	return res;
 }
 
 int main(int argv, char** argc) {
 
 	norFAT_FS fs = {
-		.addressStart = 0,//Now used
-		.tableCount = 6,//Now used
-		.flashSectors = 1024,
-		.sectorSize = 4096,
-		.programSize = 256,//Now used
+		.addressStart = 0,
+		.tableCount = 6,//FAT tables carved out of flash sectors
+		.tableSectors = 2,
+		.flashSectors = NORFAT_SECTORS,
+		.sectorSize = NORFAT_SECTOR_SIZE,
+		.programSize = 256,
 		.erase_block_sector = erase_block_sector,
 		.program_block_page = program_block_page,
 		.read_block_device = read_block_device
@@ -589,8 +673,8 @@ int main(int argv, char** argc) {
 		printf("Testing cycles set to %i\r\n", POWER_CYCLE_COUNT);
 	}
 	memset(block, 0xFF, BLOCK_SIZE);
-	fs.buff = malloc(NORFAT_SECTOR_SIZE);
-	fs.fat = malloc(NORFAT_SECTOR_SIZE);
+	fs.buff = malloc(NORFAT_SECTOR_SIZE * 2);
+	fs.fat = malloc(NORFAT_SECTOR_SIZE * 2);
 	traceBuffer = malloc(TRACE_BUFFER_SIZE);
 	//traceFile = fopen("norfat_trace.txt", "wb");
 	int32_t res = norfat_mount(&fs);

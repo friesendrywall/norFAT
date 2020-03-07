@@ -22,13 +22,14 @@
 
 typedef union {
 	struct {
-		uint16_t next : 12;
-		uint16_t active : 1;
-		uint16_t sof : 1;
-		uint16_t available : 1;
-		uint16_t write : 1;
+		uint32_t next : 16;//64MB limit
+		uint32_t erases : 12;//Track up to 4096 erases
+		uint32_t active : 1;
+		uint32_t sof : 1;
+		uint32_t available : 1;
+		uint32_t write : 1;
 	};
-	uint16_t base;
+	uint32_t base;
 }_sector;
 
 typedef struct {
@@ -45,19 +46,26 @@ typedef struct {
 		};
 		uint32_t flags;
 	};
-	_sector sector[NORFAT_SECTORS];
+	_sector sector[];
 } _FAT;/* must equal sector size */
 
 typedef struct {
+	/* Physical address of media */
 	const uint32_t addressStart;
+	/* Number of sectors used in media */
 	const uint32_t flashSectors;
+	/* Minimum erase size */
 	const uint32_t sectorSize;
+	/* Minimum program size */
 	const uint32_t programSize;
-	const uint32_t tableCount;//FAT tables carved out of flash sectors
+	/* FAT tables carved out of flash sectors */
+	const uint32_t tableCount;
+	/* Number of sectors per table */
+	const uint32_t tableSectors;
 	/* buff is used for all IO, so if driver uses DMA, allocate accordingly */
-	uint8_t* buff;//User allocated to NORFAT_SECTOR_SIZE
+	uint8_t* buff;//User allocated to sectorSize
 	/* fat is used to store the working copy of the table */
-	_FAT* fat;//User allocated to NORFAT_SECTOR_SIZE
+	_FAT* fat;//User allocated to sectorSize
 	uint32_t(*read_block_device)(uint32_t address, uint8_t* data, uint32_t len);
 	uint32_t(*erase_block_sector)(uint32_t address);
 	uint32_t(*program_block_page)(uint32_t address, uint8_t* data, uint32_t length);

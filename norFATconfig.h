@@ -3,10 +3,10 @@
 
 #include <assert.h>
 
-#define NORFAT_SECTORS		    1024
+//#define NORFAT_SECTORS		    1024
 
 #define NORFAT_CRC_COUNT	    255	
-#define NORFAT_SECTOR_SIZE	    4096
+//#define NORFAT_SECTOR_SIZE	    4096
 
 #define NORFAT_MAX_FILENAME     64
 
