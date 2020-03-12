@@ -8,9 +8,11 @@
 
 #define NORFAT_SECTORS		    1024
 #define NORFAT_SECTOR_SIZE	    4096
+#define NORFAT_TABLE_SECTORS	2
+#define NORFAT_TABLE_COUNT		6
 
 #define TRACE_BUFFER_SIZE (10 * 1024 * 1024)
-uint32_t POWER_CYCLE_COUNT = 1000;
+uint32_t POWER_CYCLE_COUNT = 10000;
 #define BLOCK_SIZE (NORFAT_SECTORS * NORFAT_SECTOR_SIZE)
 uint8_t block[BLOCK_SIZE];
 
@@ -45,6 +47,9 @@ uint32_t read_block_device(uint32_t address, uint8_t* data, uint32_t len) {
 
 uint32_t erase_block_sector(uint32_t address)
 {
+	if (address < NORFAT_TABLE_SECTORS * NORFAT_TABLE_COUNT * NORFAT_SECTOR_SIZE) {
+		traceHandler("erase_block_sector(0x%X)\r\n", address);
+	}
 	if (address + NORFAT_SECTOR_SIZE > BLOCK_SIZE) {
 		NORFAT_ASSERT(0);
 	}
@@ -68,6 +73,9 @@ uint32_t erase_block_sector(uint32_t address)
 uint32_t program_block_page(uint32_t address, uint8_t* data, uint32_t length)
 {	
 	uint32_t i;
+	if (address < NORFAT_TABLE_SECTORS * NORFAT_TABLE_COUNT * NORFAT_SECTOR_SIZE) {
+		traceHandler("program_block_page(0x%X)(%i)\r\n", address, length);
+	}
 	if (address + length > BLOCK_SIZE) {
 		NORFAT_ASSERT(0);
 	}
@@ -131,11 +139,37 @@ int traceHandler(const char* format, ...) {
 void writeTraceToFile(void) {
 	traceFile = fopen("norfat_trace.txt", "wb");
 	if (traceFile != NULL) {
-		uint32_t tail = TRACE_BUFFER_SIZE - traceLocation;
+		uint32_t tail = TRACE_BUFFER_SIZE - traceLocation; 
 		fwrite(&traceBuffer[traceLocation], 1, tail, traceFile);
 		fwrite(traceBuffer, 1, traceLocation, traceFile);
 		fclose(traceFile);
 	}
+
+	FILE* f = fopen("fs_block0.bin", "wb");
+	fwrite(&block[0], 1, 8192, f);
+	fclose(f);
+
+	f = fopen("fs_block1.bin", "wb");
+	fwrite(&block[0x2000], 1, 8192, f);
+	fclose(f);
+
+	f = fopen("fs_block2.bin", "wb");
+	fwrite(&block[0x4000], 1, 8192, f);
+	fclose(f);
+
+	f = fopen("fs_block3.bin", "wb");
+	fwrite(&block[0x6000], 1, 8192, f);
+	fclose(f);
+
+	f = fopen("fs_block4.bin", "wb");
+	fwrite(&block[0x8000], 1, 8192, f);
+	fclose(f);
+
+	f = fopen("fs_block5.bin", "wb");
+	fwrite(&block[0xA000], 1, 8192, f);
+	fclose(f);
+
+
 }
 
 void assertHandler(char* file, int line) {
@@ -332,6 +366,7 @@ int PowerStressTest(norFAT_FS* fs) {
 			if (res) {
 				if (res != NORFAT_ERR_IO) {
 					printf("Error on close res %i\r\n", res);
+					break;
 				}
 			}
 		}
@@ -348,6 +383,9 @@ int PowerStressTest(norFAT_FS* fs) {
 	free(test);
 	free(validate);
 	free(compare);
+	if (res) {
+		return res;
+	}
 	takeDownTest = 0;
 	res = norfat_mount(fs);
 	if (res) {
@@ -612,7 +650,7 @@ int deleteTest(norFAT_FS* fs) {
 
 int runTestSuite(norFAT_FS* fs) {
 	int res = 0;
-	//res = PowerStressTest(fs);
+	res = PowerStressTest(fs);
 	if (res) {
 		printf("Power cycle stress test failed err %i\r\n", res);
 		writeTraceToFile();
@@ -658,8 +696,8 @@ int main(int argv, char** argc) {
 
 	norFAT_FS fs = {
 		.addressStart = 0,
-		.tableCount = 6,//FAT tables carved out of flash sectors
-		.tableSectors = 2,
+		.tableCount = NORFAT_TABLE_COUNT,//FAT tables carved out of flash sectors
+		.tableSectors = NORFAT_TABLE_SECTORS,
 		.flashSectors = NORFAT_SECTORS,
 		.sectorSize = NORFAT_SECTOR_SIZE,
 		.programSize = 256,

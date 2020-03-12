@@ -23,7 +23,8 @@
 typedef union {
 	struct {
 		uint32_t next : 16;//64MB limit
-		uint32_t erases : 12;//Track up to 4096 erases
+		uint32_t erases : 11;//Track up to 2048 erases
+		uint32_t eraseFlag : 1;
 		uint32_t active : 1;
 		uint32_t sof : 1;
 		uint32_t available : 1;
@@ -72,6 +73,9 @@ typedef struct {
 	//Non userspace stuff
 	uint32_t firstFAT;
 	uint32_t volumeMounted;
+	//Run time calculated 'constants'
+	uint32_t tableBytes;
+	uint32_t tableIndexBytes;
 	int lastError;
 } norFAT_FS;
 

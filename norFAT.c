@@ -15,6 +15,7 @@
 #define NORFAT_SOF_MSK      (0x70000000)
 #define NORFAT_SOF_MATCH    (0x30000000)
 #define NORFAT_EOF (0xFFFF)
+
 #define NORFAT_EMPTY_MASK   (0xF000FFFF)
 #define NORFAT_GARBAGE_MASK (0x0FFF0000)
 
@@ -22,6 +23,8 @@
 #define NORFAT_TABLE_OLD	1
 #define NORFAT_TABLE_EMPTY	2
 #define NORFAT_TABLE_CRC    3
+
+#define NORFAT_TABLE_BYTES(sectors) (sizeof(_FAT) + (sizeof(_sector) * sectors))
 
 static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap);
 
@@ -34,6 +37,7 @@ static uint32_t crc32(void* buf, int len, uint32_t Seed);
 #define NORFAT_CRC crc32
 
 uint32_t crc32(void* buf, int len, uint32_t Seed) {
+	NORFAT_TRACE(("CRC:0x%X|%i|0x%X\r\n", (uint32_t)buf, len, Seed));
 	unsigned char* p;
 	uint32_t crc = Seed;
 	if (!crc32_table[1]) /* if not already done, */
@@ -55,6 +59,24 @@ void init_crc32(void) {
 
 #endif
 
+static uint32_t calcTableCrc(norFAT_FS* fs, uint32_t index) {
+	uint32_t crcRes;
+	uint32_t crclen =
+		(sizeof(_FAT) + (sizeof(_sector) * fs->flashSectors)) -
+		(sizeof(_commit) * (index + 1));
+	crcRes = NORFAT_CRC(&fs->fat->commit[index + 1], crclen, 0xFFFFFFFF);
+	NORFAT_TRACE(("calcTableCrc[%i](%i) 0x%X\r\n", index, crclen, crcRes));
+	return crcRes;
+}
+
+static void updateTableCrc(norFAT_FS* fs, uint32_t index) {
+	uint8_t cr[9];
+	NORFAT_TRACE(("updateTableCrc[%i]\r\n", index));
+	uint32_t crcRes = calcTableCrc(fs, index);
+	snprintf(cr, 9, "%08X", crcRes);
+	memcpy(&fs->fat->commit[index], cr, 8);
+}
+
 static uint32_t findCrcIndex(_FAT* fat) {
 	uint32_t i;
 	for (i = NORFAT_CRC_COUNT - 1; i > 0; i--) {
@@ -65,11 +87,25 @@ static uint32_t findCrcIndex(_FAT* fat) {
 	return i;
 }
 
+static int32_t updateEraseCounts(norFAT_FS* fs) {
+	uint32_t i;
+	uint32_t wasUpdated = 0;
+	NORFAT_TRACE(("updateEraseCounts()\r\n"));
+	for (i = (fs->tableCount * fs->tableSectors); i < fs->flashSectors; i++) {
+		if (!fs->fat->sector[i].eraseFlag) {
+			fs->fat->sector[i].eraseFlag = 1;
+			fs->fat->sector[i].erases++;
+			wasUpdated = 1;
+		}
+	}
+	return wasUpdated;
+}
+
 static int32_t scanTable(norFAT_FS* fs, _FAT* fat) {
 	uint32_t i;
 	uint32_t wasRepaired = 0;
 	NORFAT_TRACE(("scanTable()\r\n"));
-	for (i = fs->tableCount; i < fs->flashSectors; i++) {
+	for (i = (fs->tableCount * fs->tableSectors); i < fs->flashSectors; i++) {
 		if (fat->sector[i].write && !fat->sector[i].available) {
 			NORFAT_INFO(("Sector %i recovered\r\n", i));
 			NORFAT_TRACE(("SECTOR:recover %i\r\n", i));
@@ -83,7 +119,7 @@ static int32_t scanTable(norFAT_FS* fs, _FAT* fat) {
 static int32_t copyTable(norFAT_FS* fs, uint32_t toIndex, uint32_t fromIndex) {
 	toIndex %= fs->tableCount;
 	fromIndex %= fs->tableCount;
-	NORFAT_TRACE(("copyTable(%i -> %i)\r\n", toIndex, fromIndex));
+	NORFAT_TRACE(("copyTable(%i -> %i)\r\n", fromIndex, toIndex));
 	if (fs->read_block_device(
 		fs->addressStart + ((fs->sectorSize * fs->tableSectors) * fromIndex),
 		(uint8_t*)fs->buff, (fs->sectorSize * fs->tableSectors))) {
@@ -134,7 +170,7 @@ static uint32_t loadTable(norFAT_FS* fs, uint32_t tableIndex) {
 	NORFAT_TRACE(("loadTable:crc[%i]\r\n", j));
 	memcpy(cr, &fs->fat->commit[j], 8);
 	cr[8] = 0;
-	uint32_t crclen = sizeof(_FAT) - (sizeof(_commit) * (j + 1ULL));
+	uint32_t crclen = NORFAT_TABLE_BYTES(fs->flashSectors) - (sizeof(_commit) * (j + 1ULL));
 	crcRes = NORFAT_CRC(&fs->fat->commit[j + 1], crclen, 0xFFFFFFFF);
 	if (crcRes != strtoul(cr, NULL, 0x10)) {
 		NORFAT_TRACE(("loadTable:failure 0x%X != 0x%s\r\n", crcRes, cr));
@@ -167,16 +203,18 @@ static int32_t validateTable(norFAT_FS* fs, uint32_t tableIndex, uint32_t* crc) 
 		}
 	}
 	if (j == (fs->sectorSize * fs->tableSectors)) {
+		NORFAT_TRACE(("validateTable(%i):empty\r\n", tableIndex));
 		return NORFAT_TABLE_EMPTY;
 	}
 	j = findCrcIndex(fat);
 	NORFAT_TRACE(("validateTable:crc[%i]\r\n", j));
+	//crcRes = calcTableCrc();
 	memcpy(cr, &fat->commit[j], 8);
 	cr[8] = 0;
-	uint32_t crclen = sizeof(_FAT) - (sizeof(_commit) * (j + 1ULL));
+	uint32_t crclen = NORFAT_TABLE_BYTES(fs->flashSectors) - (sizeof(_commit) * (j + 1ULL));
 	crcRes = NORFAT_CRC(&fat->commit[j + 1], crclen, 0xFFFFFFFF);
 	if (crcRes != strtoul(cr, NULL, 0x10)) {
-		NORFAT_TRACE(("validateTable:failure 0x%X != 0x%s\r\n", crcRes, cr));
+		NORFAT_TRACE(("validateTable:failure 0x%X != 0x%s (%i)\r\n", crcRes, cr, crclen));
 		return NORFAT_TABLE_CRC;
 	}
 	if (crc) {
@@ -191,7 +229,7 @@ static int32_t garbageCollect(norFAT_FS* fs) {
 	uint32_t i;
 	uint32_t collected = 0;
 	NORFAT_TRACE(("garbageCollect():"));
-	for (i = fs->tableCount; i < fs->flashSectors; i++) {
+	for (i = (fs->tableCount * fs->tableSectors); i < fs->flashSectors; i++) {
 		if (!fs->fat->sector[i].active) {
 			fs->fat->sector[i].base |= NORFAT_EMPTY_MASK;
 			NORFAT_TRACE(("[%i]", i));
@@ -216,7 +254,7 @@ static int32_t findEmptySector(norFAT_FS* fs) {
 	int32_t res;
 	uint32_t sp = NORFAT_RAND() % fs->flashSectors;
 	NORFAT_TRACE(("findEmptySector().."));
-	if (sp < fs->tableCount) {
+	if (sp < (fs->tableCount * fs->tableSectors)) {
 		sp = fs->flashSectors / 2;
 	}
 	for (i = sp; i < fs->flashSectors; i++) {
@@ -226,7 +264,7 @@ static int32_t findEmptySector(norFAT_FS* fs) {
 			return i;
 		}
 	}
-	for (i = fs->tableCount; i < sp; i++) {
+	for (i = (fs->tableCount * fs->tableSectors); i < sp; i++) {
 		if (fs->fat->sector[i].available) {
 			fs->fat->sector[i].available = 0;
 			NORFAT_TRACE(("[%i]\r\n", i));
@@ -238,7 +276,7 @@ static int32_t findEmptySector(norFAT_FS* fs) {
 	if (res) {
 		return res;
 	}
-	for (i = fs->tableCount; i < fs->flashSectors; i++) {
+	for (i = (fs->tableCount * fs->tableSectors); i < fs->flashSectors; i++) {
 		if (fs->fat->sector[i].available) {
 			fs->fat->sector[i].available = 0;
 			NORFAT_TRACE(("[%i]\r\n", i));
@@ -254,10 +292,10 @@ static norFAT_fileHeader* fileSearch(norFAT_FS* fs, const char* filename, uint32
 	norFAT_fileHeader* f = NULL;
 	*sector = NORFAT_INVALID_SECTOR;
 	NORFAT_TRACE(("fileSearch(%s)..", filename));
-	for (i = fs->tableCount; i < fs->flashSectors; i++) {
-		if (fs->fat->sector[i].base & 0xF0000000) {
-			NORFAT_TRACE((",%i=0x%X", i, fs->fat->sector[i].base >> 28));
-		}
+	for (i = (fs->tableCount * fs->tableSectors); i < fs->flashSectors; i++) {
+		//if (fs->fat->sector[i].base & 0xF0000000) {
+		//	NORFAT_TRACE((",%i=0x%X", i, fs->fat->sector[i].base >> 28));
+		//}
 		if ((fs->fat->sector[i].base & NORFAT_SOF_MSK) == NORFAT_SOF_MATCH) {
 			if (fs->read_block_device(fs->addressStart + (i * fs->sectorSize),
 				fs->buff, sizeof(norFAT_fileHeader))) {
@@ -287,24 +325,21 @@ static norFAT_fileHeader* fileSearch(norFAT_FS* fs, const char* filename, uint32
 }
 
 static int commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
-	uint8_t cr[9];
-	uint32_t crcRes;
 	uint32_t i;
 	uint32_t index = findCrcIndex(fs->fat);
 	NORFAT_TRACE(("commitChanges(%s)..\r\n", forceSwap ? "force" : ".."));
 	//Is current table set full?
 	if (index == NORFAT_CRC_COUNT - 1 || forceSwap) {
-		NORFAT_DEBUG(("Incrementing _FAT tables %i\r\n", fs->firstFAT));
+		NORFAT_TRACE(("commitChanges:Increment _FAT tables %i\r\n", fs->firstFAT));
 		uint32_t swap1old = fs->firstFAT;
 		uint32_t swap2old = (fs->firstFAT + 1) % fs->tableCount;
 		uint32_t swap1new = (fs->firstFAT + 2) % fs->tableCount;
 		uint32_t swap2new = (fs->firstFAT + 3) % fs->tableCount;
 		fs->fat->swapCount++;
+		updateEraseCounts(fs);
 		// Refresh the FAT table and calculate crc
 		memset(fs->fat->commit, 0xFF, sizeof(_commit) * NORFAT_CRC_COUNT);
-		crcRes = NORFAT_CRC(&fs->fat->commit[1], sizeof(_FAT) - sizeof(_commit), 0xFFFFFFFF);
-		snprintf(cr, 9, "%08X", crcRes);
-		memcpy(&fs->fat->commit[0], cr, 8);
+		updateTableCrc(fs, 0);
 
 		//Erase #1 old block
 		NORFAT_TRACE(("commitChanges:Erase[%i]\r\n", swap1old));
@@ -327,7 +362,6 @@ static int commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 			NORFAT_TRACE(("NORFAT_ERR_IO\r\n"));
 			return NORFAT_ERR_IO;
 		}
-
 		//Erase #2 old block
 		NORFAT_TRACE(("commitChanges:Erase[%i]\r\n", swap2old));
 		for (i = 0; i < fs->tableSectors; i++) {
@@ -348,12 +382,15 @@ static int commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 			NORFAT_TRACE(("NORFAT_ERR_IO\r\n"));
 			return NORFAT_ERR_IO;
 		}
+		validateTable(fs, swap1new, &i);
+		NORFAT_TRACE(("TESTCRC: 0x%X\r\n", calcTableCrc(fs, 0)));
 
 		fs->firstFAT += 2;
 		fs->firstFAT %= fs->tableCount;
-		NORFAT_TRACE(("commitChanges:firstFat = %i:crc[0] = 0x%X\r\n", fs->firstFAT, crcRes));
-		NORFAT_DEBUG(("_FAT tables now at %i %i crc[0] = 0x%X\n",
-			fs->firstFAT, ((fs->firstFAT + 1) % fs->tableCount), crcRes));
+		NORFAT_TRACE(("commitChanges:firstFat = %i\r\n", 
+			fs->firstFAT));
+		NORFAT_DEBUG(("_FAT tables now at %i %i\n",
+			fs->firstFAT, ((fs->firstFAT + 1) % fs->tableCount)));
 		return NORFAT_OK;
 	}
 	NORFAT_DEBUG(("Committing _FAT tables %i %i\r\n", 
@@ -362,10 +399,11 @@ static int commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 	//CRC
 	NORFAT_ASSERT(index < NORFAT_CRC_COUNT - 1);
 	memset(&fs->fat->commit[index], 0, sizeof(_commit));
-	uint32_t crclen = sizeof(_FAT) - (sizeof(_commit) * (index + 2ULL));
-	crcRes = NORFAT_CRC(&fs->fat->commit[index + 2], crclen, 0xFFFFFFFF);
-	snprintf(cr, 9, "%08X", crcRes);
-	memcpy(&fs->fat->commit[index + 1], cr, 8);
+	updateTableCrc(fs, index + 1);
+	//uint32_t crclen = NORFAT_TABLE_BYTES(fs->flashSectors) - (sizeof(_commit) * (index + 2ULL));
+	//crcRes = NORFAT_CRC(&fs->fat->commit[index + 2], crclen, 0xFFFFFFFF);
+	//snprintf(cr, 9, "%08X", crcRes);
+	//memcpy(&fs->fat->commit[index + 1], cr, 8);
 
 	memset(fs->buff, 0xFF, (fs->sectorSize * fs->tableSectors));
 	uint8_t* fat = (uint8_t*)fs->fat;
@@ -387,11 +425,29 @@ static int commitChanges(norFAT_FS* fs, uint32_t forceSwap) {
 		NORFAT_TRACE(("NORFAT_ERR_IO\r\n"));
 		return NORFAT_ERR_IO;
 	}
-	NORFAT_TRACE(("commitChanges:firstFat = %i:crc[%i] = 0x%X\r\n", fs->firstFAT, index + 1, crcRes));
-	NORFAT_DEBUG(("_FAT tables %i %i commited crc[%i] 0x%X\r\n",
-		fs->firstFAT, ((fs->firstFAT + 1) % fs->tableCount), index + 1, crcRes));
+#if 0
+	uint8_t* tb = malloc(fs->sectorSize * fs->tableSectors);
+	memcpy(tb, fs->buff, (fs->sectorSize* fs->tableSectors));
+	if (fs->lastError != NORFAT_ERR_IO && validateTable(fs, fs->firstFAT, &i) == NORFAT_TABLE_CRC) {
+		if (fs->lastError != NORFAT_ERR_IO) {
+			FILE* f = fopen("fs_buff.bin", "wb");
+			fwrite(tb, 1, 8192, f);
+			fclose(f);
+			f = fopen("fs_fat.bin", "wb");
+			fwrite(fs->fat, 1, 8192, f);
+			fclose(f);
+			NORFAT_TRACE(("TESTCRC: 0x%X\r\n", calcTableCrc(fs, index + 1)));
+			free(tb);
+			return NORFAT_ERR_CRC;
+		}
+	}
+	free(tb);
+#endif
+	NORFAT_TRACE(("commitChanges:firstFat = %i\r\n", fs->firstFAT, index + 1));
 	return NORFAT_OK;
 }
+
+uint32_t scenarioList[64];
 
 int norfat_mount(norFAT_FS* fs) {
 	int32_t i;
@@ -413,8 +469,10 @@ int norfat_mount(norFAT_FS* fs) {
 	NORFAT_ASSERT(fs->tableCount % 2 == 0);//Must be multiple of 2
 	NORFAT_ASSERT(fs->tableCount <= NORFAT_MAX_TABLES);
 	NORFAT_ASSERT(
-		sizeof(_FAT) + (sizeof(_sector) * fs->flashSectors) <
-		fs->tableSectors * fs->sectorSize);
+		NORFAT_TABLE_BYTES(fs->flashSectors) < fs->tableSectors * fs->sectorSize);
+	/* calculate fixed sizes */
+	fs->tableBytes = (fs->sectorSize * fs->tableSectors);
+
 	fs->lastError = NORFAT_OK;
 	uint32_t sectorState[NORFAT_MAX_TABLES];
 	uint32_t sectorCRC[NORFAT_MAX_TABLES];
@@ -449,6 +507,7 @@ int norfat_mount(norFAT_FS* fs) {
 	 */
 	uint32_t res;
 	uint32_t tablesValid = 0;
+	memset(fs->fat, 0, fs->tableSectors * fs->sectorSize);
 
 	for (ui = 0; ui < fs->tableCount; ui += 2) {
 		//Build a scenario
@@ -457,7 +516,14 @@ int norfat_mount(norFAT_FS* fs) {
 		scenario += sectorState[(ui + 1) % fs->tableCount] << 8;
 		scenario += sectorState[(ui + 2) % fs->tableCount] << 4;
 		scenario += sectorState[(ui + 3) % fs->tableCount] << 0;
-
+		for (i = 0; i < 64; i++) {
+			if (scenarioList[i] == scenario || scenarioList[i] == 0) {
+				break;
+			}
+		}
+		if (i != 64) {
+			scenarioList[i] = scenario;
+		}
 		res = 0;
 		switch (scenario) {
 		case 0x0032:/* |EMPTY|EMPTY| BAD |GOOD | */
@@ -516,14 +582,31 @@ int norfat_mount(norFAT_FS* fs) {
 			NORFAT_TRACE(("norfat_mount:0x%04X|ui %i\r\n", scenario, ui));
 			tablesValid = 1;
 			break;
+		case 0x3022:/* | BAD |GOOD |EMPTY|EMPTY| (Re write table) */
+			res = loadTable(fs, ui + 1);
+			if (res) {
+				return res;
+			}
+			res = eraseTable(fs, ui);
+			if (res) {
+				return res;
+			}
+			fs->firstFAT = ui;
+			res = copyTable(fs, ui, ui + 1);
+			if (res) {
+				return res;
+			}
+			//NORFAT_ASSERT(validateTable(fs, ui, NULL) == NORFAT_OK);//TODO: TEST and remove
+			NORFAT_DEBUG(("FAT table %i rebuilt from %i\r\n", ui, (ui + 1) % fs->tableCount));
+			NORFAT_TRACE(("norfat_mount:0x%04X|ui %i\r\n", scenario, ui));
+			tablesValid = 1;
+			break;
 		case 0x2032:/* |EMPTY|GOOD | BAD | EMPTY|*/
 			res = eraseTable(fs, ui + 2);
 			if (res) {
 				return res;
 			}
 			/* fallthrough to finish up */
-		case 0x3022:/* | BAD |GOOD |EMPTY|EMPTY| (Re write table) */
-			/* fallthrough same treatment*/
 		case 0x2022:/* |EMPTY|GOOD |EMPTY|EMPTY| */
 			res = loadTable(fs, ui + 1);
 			if (res) {
@@ -606,6 +689,7 @@ int norfat_mount(norFAT_FS* fs) {
 		case 0x2222:
 		case 0x2223:
 		case 0x2233:
+		case 0x3222:
 			NORFAT_TRACE(("norfat_mount:nx%04X|ui %i\r\n", scenario, ui));
 			break;
 		default:
@@ -627,6 +711,10 @@ int norfat_mount(norFAT_FS* fs) {
 	if (!tablesValid) {
 		for (ui = 0; ui < fs->tableCount; ui += 2) {
 			if (sectorState[ui] == NORFAT_TABLE_GOOD) {
+				res = loadTable(fs, ui);
+				if (res) {
+					return res;
+				}
 				res = eraseTable(fs, ui + 1);
 				if (res) {
 					return res;
@@ -642,6 +730,10 @@ int norfat_mount(norFAT_FS* fs) {
 				tablesValid = 1;
 			}
 			else if (sectorState[ui + 1] == NORFAT_TABLE_GOOD) {
+				res = loadTable(fs, ui + 1);
+				if (res) {
+					return res;
+				}
 				res = eraseTable(fs, ui);
 				if (res) {
 					return res;
@@ -665,6 +757,10 @@ int norfat_mount(norFAT_FS* fs) {
 	if (!tablesValid) {
 		for (ui = 0; ui < fs->tableCount; ui += 2) {
 			if (sectorState[ui] == NORFAT_TABLE_OLD) {
+				res = loadTable(fs, ui);
+				if (res) {
+					return res;
+				}
 				res = eraseTable(fs, ui + 1);
 				if (res) {
 					return res;
@@ -680,6 +776,10 @@ int norfat_mount(norFAT_FS* fs) {
 				tablesValid = 1;
 			}
 			else if (sectorState[ui + 1] == NORFAT_TABLE_OLD) {
+				res = loadTable(fs, ui + 1);
+				if (res) {
+					return res;
+				}
 				res = eraseTable(fs, ui);
 				if (res) {
 					return res;
@@ -719,8 +819,8 @@ int norfat_mount(norFAT_FS* fs) {
 
 int norfat_format(norFAT_FS* fs) {
 	uint32_t i, j;
-	uint8_t cr[9];
-	uint32_t crcRes;
+	//uint8_t cr[9];
+	//uint32_t crcRes;
 	int32_t res;
 	NORFAT_ASSERT(fs);
 	NORFAT_TRACE(("norfat_format()\r\n"));
@@ -746,9 +846,10 @@ int norfat_format(norFAT_FS* fs) {
 	memset(fs->fat, 0xFF, (fs->sectorSize * fs->tableSectors));
 	fs->fat->garbageCount = 0;
 	fs->fat->swapCount = 0;
-	crcRes = NORFAT_CRC(&fs->fat->commit[1], sizeof(_FAT) - sizeof(_commit), 0xFFFFFFFF);
-	snprintf(cr, 9, "%08X", crcRes);
-	memcpy(&fs->fat->commit[0], cr, 8);
+	updateTableCrc(fs, 0);
+	//crcRes = NORFAT_CRC(&fs->fat->commit[1], NORFAT_TABLE_BYTES(fs->flashSectors) - sizeof(_commit), 0xFFFFFFFF);
+	//snprintf(cr, 9, "%08X", crcRes);
+	//memcpy(&fs->fat->commit[0], cr, 8);
 	if (fs->program_block_page(fs->addressStart, (uint8_t*)fs->fat,
 		(fs->sectorSize * fs->tableSectors))) {
 		NORFAT_TRACE(("NORFAT_ERR_IO\r\n"));
@@ -760,7 +861,7 @@ int norfat_format(norFAT_FS* fs) {
 		return NORFAT_ERR_IO;
 	}
 	fs->firstFAT = 0;
-	NORFAT_DEBUG(("Volume formatted crc 0x%X\r\n", crcRes));
+	//NORFAT_DEBUG(("Volume formatted crc 0x%X\r\n", crcRes));
 	NORFAT_TRACE(("FORMAT:done\r\n"));
 	return 0;
 }
@@ -782,7 +883,7 @@ int norfat_fsinfo(norFAT_FS* fs) {
 	NORFAT_INFO_PRINT(("\r\nnorFAT Version %s\r\n", NORFAT_VERSION));
 	NORFAT_INFO_PRINT(("\r\nVolume info:Capacity %9i\r\n",
 		(fs->flashSectors * fs->sectorSize) - tableOverhead));
-	for (i = fs->tableCount; i < fs->flashSectors; i++) {
+	for (i = (fs->tableCount * fs->tableSectors); i < fs->flashSectors; i++) {
 		if ((fs->fat->sector[i].base & NORFAT_SOF_MSK) == NORFAT_SOF_MATCH) {
 			if (fs->read_block_device(fs->addressStart + (i * fs->sectorSize),
 				fs->buff, sizeof(norFAT_fileHeader))) {
@@ -1092,7 +1193,7 @@ size_t norfat_fwrite(norFAT_FS* fs, const void* ptr, size_t size, size_t count, 
 			stream->lastError = NORFAT_ERR_IO;
 			return NORFAT_ERR_IO;
 		}
-		fs->fat->sector[stream->currentSector].erases++;
+		fs->fat->sector[stream->currentSector].eraseFlag = 0;
 		NORFAT_DEBUG(("New file sector %i\r\n", stream->currentSector));
 		NORFAT_TRACE(("norfat_fwrite:add sector[%i]\r\n", stream->currentSector));
 		//New file
@@ -1124,7 +1225,7 @@ size_t norfat_fwrite(norFAT_FS* fs, const void* ptr, size_t size, size_t count, 
 				stream->lastError = NORFAT_ERR_IO;
 				return NORFAT_ERR_IO;
 			}
-			fs->fat->sector[nextSector].erases++;
+			fs->fat->sector[nextSector].eraseFlag = 0;
 			NORFAT_TRACE(("norfat_fwrite:add sector[%i]->[%i]\r\n", stream->currentSector, nextSector));
 			NORFAT_DEBUG(("File sector added %i -> %i\r\n", stream->currentSector, nextSector));
 			fs->fat->sector[stream->currentSector].next = nextSector;
