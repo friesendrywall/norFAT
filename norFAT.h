@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "norFATconfig.h"
 
-#define NORFAT_VERSION "1.00"
+#define NORFAT_VERSION "1.01"
 #define NORFAT_ERR_EMPTY			(-20)
 #define NORFAT_ERR_CORRUPT			(-10)
 #define NORFAT_ERR_MALLOC			(-8)
@@ -18,6 +18,10 @@
 
 #ifndef NORFAT_MAX_TABLES
 #define NORFAT_MAX_TABLES 16
+#endif
+
+#ifndef NORFAT_CRC_COUNT
+#error NORFAT_CRC_COUNT must be defined in norFATconfig.h
 #endif
 
 typedef union {

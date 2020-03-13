@@ -29,6 +29,7 @@
 static int32_t commitChanges(norFAT_FS* fs, uint32_t forceSwap);
 
 #ifndef NORFAT_CRC
+/* crc routines written by unknown public source */
 static uint32_t crc32_table[256];
 void init_crc32(void);
 static uint32_t crc32(void* buf, int len, uint32_t Seed);

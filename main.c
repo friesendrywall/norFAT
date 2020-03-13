@@ -263,6 +263,7 @@ int PowerStressTest(norFAT_FS* fs) {
 	uint32_t powerCycleTest = 0;
 	uint32_t powerCycleTestResult = 0;
 	uint32_t powerCycleValidate = 0;
+	uint32_t bytesWritten = 0;
 	uint32_t rnd = 0;
 	uint32_t cycles = POWER_CYCLE_COUNT;
 	int32_t res = 0;
@@ -338,50 +339,35 @@ int PowerStressTest(norFAT_FS* fs) {
 			break;
 		}
 		takeDownTest = 1;
-#if 0
+
 		//powerCycleTest = 0;
 		f = norfat_fopen(fs, "powercycles.txt", "rb");
 		if (f != NULL) {
 			res = norfat_fread(fs, &powerCycleTestResult, 1, 4, f);
 			res = norfat_fclose(fs, f);
+			if (res == 0) {
+				if (powerCycleValidate > powerCycleTestResult) {
+					res = 10;
+					break;
+				}
+				powerCycleValidate = powerCycleTestResult;
+			}
 			powerCycleTest = powerCycleTestResult + 1;
 			f = norfat_fopen(fs, "powercycles.txt", "wb");
 			if (f != NULL) {
 				res = norfat_fwrite(fs, &powerCycleTest, 1, 4, f);
 				res = norfat_fclose(fs, f);
 			}
+	}
+		else {
+			if (norfat_errno(fs) != NORFAT_ERR_IO) {
+				return norfat_errno(fs);
+			}
 		}
 
-#endif
+
 		while (res == 0) {
 			//Save and stuff until it dies
-#if 1
-//powerCycleTest = 0;
-			f = norfat_fopen(fs, "powercycles.txt", "rb");
-			if (f != NULL) {
-				res = norfat_fread(fs, &powerCycleTestResult, 1, 4, f);
-				res = norfat_fclose(fs, f);
-				if (res == 0) {
-					if (powerCycleValidate > powerCycleTestResult) {
-						res = 10;
-						break;
-					}
-					powerCycleValidate = powerCycleTestResult;
-				}
-				powerCycleTest = powerCycleTestResult + 1;
-				f = norfat_fopen(fs, "powercycles.txt", "wb");
-				if (f != NULL) {
-					res = norfat_fwrite(fs, &powerCycleTest, 1, 4, f);
-					res = norfat_fclose(fs, f);
-				}
-			}
-			else {
-				if (norfat_errno(fs) != NORFAT_ERR_IO) {
-					return norfat_errno(fs);
-				}
-			}
-
-#endif
 			sprintf(buf, "test%i.txt", i++ % 10);
 			f = norfat_fopen(fs, buf, "w");
 			if (f == NULL) {
@@ -417,6 +403,7 @@ int PowerStressTest(norFAT_FS* fs) {
 					}
 					break;
 				}
+				bytesWritten += res;
 				j -= tl;
 			}
 
@@ -434,7 +421,7 @@ int PowerStressTest(norFAT_FS* fs) {
 		}
 		res = 0;
 		if (cycles-- == 0) {
-			printf("\r\nPower stress test passed (%i)\r\n", powerCycleTestResult);
+			printf("\r\nPower stress test passed (%i)\r\n%i bytes written\r\n", powerCycleTestResult, bytesWritten);
 			break;
 		}
 	}
@@ -604,6 +591,23 @@ int wearLeveling(norFAT_FS* fs) {
 	uint32_t max = 0;
 	int minIndex = 0;
 	int maxIndex = 0;
+#if 1
+	printf("Wear results\r\n");
+	printf("     |00|01|02|03|04|05|06|07|08|09|0A|0B|0C|0D|0E|0F");
+	for (i = 0; i < NORFAT_SECTORS; i++) {
+		if (i % 16 == 0) {
+			printf("|\r\n[%3X]", i / 16);
+		}
+		if (i <= (fs->tableCount * fs->tableSectors)) {
+			printf("!%02i", EraseCounts[i]);
+		}
+		else {
+			printf("|%02i", EraseCounts[i]);
+		}
+
+	}
+	printf("\r\n");
+#else
 	for (i = 0; i < NORFAT_SECTORS; i++) {
 		if (EraseCounts[i] > max) {
 			max = EraseCounts[i];
@@ -668,6 +672,7 @@ int wearLeveling(norFAT_FS* fs) {
 		printf("%i", i % 10);
 	}
 	printf("\r\n");
+#endif
 	return 0;
 }
 
