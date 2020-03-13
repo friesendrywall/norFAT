@@ -30,13 +30,15 @@ Each FAT table is ordered as follows:
 ```
 typedef union {
 	struct {
-		uint16_t next : 12;
-		uint16_t active : 1;
-		uint16_t sof : 1;
-		uint16_t available : 1;
-		uint16_t write : 1;
+		uint32_t next : 16;//64MB limit
+		uint32_t erases : 11;//Track up to 2048 erases
+		uint32_t eraseFlag : 1;
+		uint32_t active : 1;
+		uint32_t sof : 1;
+		uint32_t available : 1;
+		uint32_t write : 1;
 	};
-	uint16_t base;
+	uint32_t base;
 }_sector;
 
 typedef struct {
@@ -45,8 +47,15 @@ typedef struct {
 	uint16_t garbageCount;
 	uint32_t future;
 	_sector sector[NORFAT_SECTORS];
-} _FAT;/* must equal sector size */
+} _FAT;
 ```
-There are two copies of this in NOR at any time, with each one saved atomically on commit.  _sector is used in such a way that only 1's are turned to 0's until garbage collection happens.  After each commit, the old crc is 0'd, and a new entry calculated based on its new offset, then entered using ascii to denote the new commit.  Once either we are out of commit entries, or garbage needs to be collected, then we refresh and copy new entries to the next two locations while deleting old.
+There are two copies of this in NOR at any time, with each one 
+saved atomically on commit.  _sector is used in such a way that 
+only 1's are turned to 0's until garbage collection happens.  
+After each commit, the old crc is 0'd, and a new entry calculated 
+based on its new offset, then entered using ascii to denote the 
+new commit.  Once either we are out of commit entries, or garbage 
+needs to be collected, then we refresh and copy new entries to the 
+next two locations while deleting old.
 
 More to follow later..

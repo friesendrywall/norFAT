@@ -6,13 +6,13 @@
 
 #include "norFAT.h"
 
-#define NORFAT_SECTORS		    1024
+#define NORFAT_SECTORS		    1534
 #define NORFAT_SECTOR_SIZE	    4096
 #define NORFAT_TABLE_SECTORS	2
 #define NORFAT_TABLE_COUNT		6
 
 #define TRACE_BUFFER_SIZE (10 * 1024 * 1024)
-uint32_t POWER_CYCLE_COUNT = 10000;
+uint32_t POWER_CYCLE_COUNT = 2500;
 #define BLOCK_SIZE (NORFAT_SECTORS * NORFAT_SECTOR_SIZE)
 uint8_t block[BLOCK_SIZE];
 
@@ -144,7 +144,7 @@ void writeTraceToFile(void) {
 		fwrite(traceBuffer, 1, traceLocation, traceFile);
 		fclose(traceFile);
 	}
-
+#if 0
 	FILE* f = fopen("fs_block0.bin", "wb");
 	fwrite(&block[0], 1, 8192, f);
 	fclose(f);
@@ -168,7 +168,7 @@ void writeTraceToFile(void) {
 	f = fopen("fs_block5.bin", "wb");
 	fwrite(&block[0xA000], 1, 8192, f);
 	fclose(f);
-
+#endif
 
 }
 
@@ -260,6 +260,8 @@ finalize:
 
 int PowerStressTest(norFAT_FS* fs) {
 	uint32_t i, j, tl, testLength, powered;
+	uint32_t powerCycleTest = 0;
+	uint32_t powerCycleTestResult = 0;
 	uint32_t rnd = 0;
 	uint32_t cycles = POWER_CYCLE_COUNT;
 	int32_t res = 0;
@@ -285,12 +287,24 @@ int PowerStressTest(norFAT_FS* fs) {
 	f = norfat_fopen(fs, "validate.bin", "w");
 	res = norfat_fwrite(fs, validate, 1, 0x9988, f);
 	res = norfat_fclose(fs, f);
+#if 1
+	f = norfat_fopen(fs, "powercycles.txt", "w");
+	if (f == NULL) {
+		return norfat_errno(fs);
+	}
+	res = norfat_fwrite(fs, &powerCycleTest, 1, 4, f);
+	res = norfat_fclose(fs, f);
+#endif
 	while (res == 0) {
 		powered = 1;
-		takeDownTest = 0;
-		takeDownPeriod = 10 + (getRand() % 2500);
+		takeDownTest = 1;
+		takeDownPeriod = 1 + (getRand() % 2500);
 		//printf("Mount attempt .......\r\n");
 		res = norfat_mount(fs);
+		if (res == NORFAT_ERR_IO) {
+			res = 0;
+			continue;
+		}
 		if (res) {
 			printf("Mount failed err %i\r\n", res);
 			break;
@@ -299,6 +313,7 @@ int PowerStressTest(norFAT_FS* fs) {
 		if (cycles % 100 == 0) {
 			printf("%i", cycles);
 		}
+		takeDownTest = 0;
 		f = norfat_fopen(fs, "validate.bin", "r");
 		if (res || !f) {
 			printf("File Failed %i\r\n", res);
@@ -322,8 +337,43 @@ int PowerStressTest(norFAT_FS* fs) {
 			break;
 		}
 		takeDownTest = 1;
+#if 0
+		//powerCycleTest = 0;
+		f = norfat_fopen(fs, "powercycles.txt", "rb");
+		if (f != NULL) {
+			res = norfat_fread(fs, &powerCycleTestResult, 1, 4, f);
+			res = norfat_fclose(fs, f);
+			powerCycleTest = powerCycleTestResult + 1;
+			f = norfat_fopen(fs, "powercycles.txt", "wb");
+			if (f != NULL) {
+				res = norfat_fwrite(fs, &powerCycleTest, 1, 4, f);
+				res = norfat_fclose(fs, f);
+			}
+		}
+
+#endif
 		while (res == 0) {
 			//Save and stuff until it dies
+#if 1
+//powerCycleTest = 0;
+			f = norfat_fopen(fs, "powercycles.txt", "rb");
+			if (f != NULL) {
+				res = norfat_fread(fs, &powerCycleTestResult, 1, 4, f);
+				res = norfat_fclose(fs, f);
+				powerCycleTest = powerCycleTestResult + 1;
+				f = norfat_fopen(fs, "powercycles.txt", "wb");
+				if (f != NULL) {
+					res = norfat_fwrite(fs, &powerCycleTest, 1, 4, f);
+					res = norfat_fclose(fs, f);
+				}
+			}
+			else {
+				if (norfat_errno(fs) != NORFAT_ERR_IO) {
+					return norfat_errno(fs);
+				}
+			}
+
+#endif
 			sprintf(buf, "test%i.txt", i++ % 10);
 			f = norfat_fopen(fs, buf, "w");
 			if (f == NULL) {
@@ -376,7 +426,7 @@ int PowerStressTest(norFAT_FS* fs) {
 		}
 		res = 0;
 		if (cycles-- == 0) {
-			printf("\r\nPower stress test passed\r\n");
+			printf("\r\nPower stress test passed (%i)\r\n", powerCycleTestResult);
 			break;
 		}
 	}
@@ -694,9 +744,9 @@ int runTestSuite(norFAT_FS* fs) {
 
 int main(int argv, char** argc) {
 
-	norFAT_FS fs = {
+	norFAT_FS fs1 = {
 		.addressStart = 0,
-		.tableCount = NORFAT_TABLE_COUNT,//FAT tables carved out of flash sectors
+		.tableCount = NORFAT_TABLE_COUNT - 2,//FAT tables carved out of flash sectors
 		.tableSectors = NORFAT_TABLE_SECTORS,
 		.flashSectors = NORFAT_SECTORS,
 		.sectorSize = NORFAT_SECTOR_SIZE,
@@ -705,22 +755,48 @@ int main(int argv, char** argc) {
 		.program_block_page = program_block_page,
 		.read_block_device = read_block_device
 	};
+
+	norFAT_FS fs2 = {
+	.addressStart = 0,
+	.tableCount = NORFAT_TABLE_COUNT,//FAT tables carved out of flash sectors
+	.tableSectors = NORFAT_TABLE_SECTORS,
+	.flashSectors = NORFAT_SECTORS,
+	.sectorSize = NORFAT_SECTOR_SIZE,
+	.programSize = 256,
+	.erase_block_sector = erase_block_sector,
+	.program_block_page = program_block_page,
+	.read_block_device = read_block_device
+	};
+
 	printf("norFAT test jig 1.00, norFAT Version %s\r\n", NORFAT_VERSION);
 	if (argv > 1) {
 		POWER_CYCLE_COUNT = strtol(argc[1], NULL, 10);
 		printf("Testing cycles set to %i\r\n", POWER_CYCLE_COUNT);
 	}
 	memset(block, 0xFF, BLOCK_SIZE);
-	fs.buff = malloc(NORFAT_SECTOR_SIZE * 2);
-	fs.fat = malloc(NORFAT_SECTOR_SIZE * 2);
+	fs1.buff = malloc(NORFAT_SECTOR_SIZE * 2);
+	fs1.fat = malloc(NORFAT_SECTOR_SIZE * 2);
+	fs2.buff = malloc(NORFAT_SECTOR_SIZE * 2);
+	fs2.fat = malloc(NORFAT_SECTOR_SIZE * 2);
 	traceBuffer = malloc(TRACE_BUFFER_SIZE);
 	//traceFile = fopen("norfat_trace.txt", "wb");
-	int32_t res = norfat_mount(&fs);
+	int32_t res = norfat_mount(&fs1);
 	if (res == NORFAT_ERR_EMPTY) {
-		res = norfat_format(&fs);
-		res = norfat_mount(&fs);
+		res = norfat_format(&fs1);
+		res = norfat_mount(&fs1);
 	}
-	res = runTestSuite(&fs);
+	res = runTestSuite(&fs1);
+	if (res) {
+		return res;
+	}
+	memset(block, 0xFF, BLOCK_SIZE);
+	memset(EraseCounts, 0, sizeof(EraseCounts));
+	res = norfat_mount(&fs2);
+	if (res == NORFAT_ERR_EMPTY) {
+		res = norfat_format(&fs2);
+		res = norfat_mount(&fs2);
+	}
+	res = runTestSuite(&fs2);
 	free(traceBuffer);
 	return res;
 }

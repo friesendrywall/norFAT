@@ -22,9 +22,7 @@
 
 typedef union {
 	struct {
-		uint32_t next : 16;//64MB limit
-		uint32_t erases : 11;//Track up to 2048 erases
-		uint32_t eraseFlag : 1;
+		uint32_t next : 28;
 		uint32_t active : 1;
 		uint32_t sof : 1;
 		uint32_t available : 1;
@@ -39,8 +37,10 @@ typedef struct {
 
 typedef struct {
 	_commit commit[NORFAT_CRC_COUNT];
-	uint16_t swapCount;
-	uint16_t garbageCount;
+	/* Number of times _Fat tables have been swapped. */
+	uint32_t swapCount;
+	/* Number of times garbage collected, never more than swapCount */
+	uint32_t garbageCount;
 	union {
 		struct {
 			uint32_t future : 32;
@@ -73,9 +73,6 @@ typedef struct {
 	//Non userspace stuff
 	uint32_t firstFAT;
 	uint32_t volumeMounted;
-	//Run time calculated 'constants'
-	uint32_t tableBytes;
-	uint32_t tableIndexBytes;
 	int lastError;
 } norFAT_FS;
 
