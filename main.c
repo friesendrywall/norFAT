@@ -262,6 +262,7 @@ int PowerStressTest(norFAT_FS* fs) {
 	uint32_t i, j, tl, testLength, powered;
 	uint32_t powerCycleTest = 0;
 	uint32_t powerCycleTestResult = 0;
+	uint32_t powerCycleValidate = 0;
 	uint32_t rnd = 0;
 	uint32_t cycles = POWER_CYCLE_COUNT;
 	int32_t res = 0;
@@ -360,6 +361,13 @@ int PowerStressTest(norFAT_FS* fs) {
 			if (f != NULL) {
 				res = norfat_fread(fs, &powerCycleTestResult, 1, 4, f);
 				res = norfat_fclose(fs, f);
+				if (res == 0) {
+					if (powerCycleValidate > powerCycleTestResult) {
+						res = 10;
+						break;
+					}
+					powerCycleValidate = powerCycleTestResult;
+				}
 				powerCycleTest = powerCycleTestResult + 1;
 				f = norfat_fopen(fs, "powercycles.txt", "wb");
 				if (f != NULL) {
