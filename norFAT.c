@@ -428,6 +428,7 @@ int norfat_mount(norFAT_FS* fs) {
 	NORFAT_ASSERT(sizeof(norFAT_fileHeader) < fs->programSize);
 	NORFAT_ASSERT(fs->tableCount % 2 == 0);//Must be multiple of 2
 	NORFAT_ASSERT(fs->tableCount <= NORFAT_MAX_TABLES);//We don't want to dynamically allocate
+	NORFAT_TRACE(("Table Bytes = 0x%X\r\n", NORFAT_TABLE_BYTES(fs->flashSectors)));
 	NORFAT_ASSERT(//Assure that the total sectors fits in the configured sectors
 		NORFAT_TABLE_BYTES(fs->flashSectors) < fs->tableSectors * fs->sectorSize);
 
