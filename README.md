@@ -30,9 +30,7 @@ Each FAT table is ordered as follows:
 ```
 typedef union {
 	struct {
-		uint32_t next : 16;//64MB limit
-		uint32_t erases : 11;//Track up to 2048 erases
-		uint32_t eraseFlag : 1;
+		uint32_t next : 28;
 		uint32_t active : 1;
 		uint32_t sof : 1;
 		uint32_t available : 1;
@@ -43,10 +41,10 @@ typedef union {
 
 typedef struct {
 	_commit commit[NORFAT_CRC_COUNT];
-	uint16_t swapCount;
-	uint16_t garbageCount;
+	uint32_t swapCount;
+	uint32_t garbageCount;
 	uint32_t future;
-	_sector sector[NORFAT_SECTORS];
+	_sector sector[];
 } _FAT;
 ```
 There are two copies of this in NOR at any time, with each one 
@@ -57,5 +55,14 @@ based on its new offset, then entered using ascii to denote the
 new commit.  Once either we are out of commit entries, or garbage 
 needs to be collected, then we refresh and copy new entries to the 
 next two locations while deleting old.
+
+NORFAT_CRC_COUNT should be chosen to match typical use.  For example, 
+a choice of 256 will cost 2048 sector bytes, but give up to 256 file
+commits that happen on fclose.  So this could be matched with
+tableSectors to roughly match rotation on the file sectors.  swapCount
+tracks the number of times the fat sector is swapped to the next in line.
+garbageCount tracks the number of collections that have happened.  Essentially
+swapCount is the number of erases /  tableCount that have happened to the 
+tables.
 
 More to follow later..
