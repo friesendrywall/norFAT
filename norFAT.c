@@ -1396,7 +1396,9 @@ int norfat_exists(norFAT_FS* fs, const char* filename) {
 		free(f);
 	}
 	else {
-		ret = fs->lastError;
+		if (fs->lastError == NORFAT_ERR_IO) {
+			return NORFAT_ERR_IO;
+		}
 	}
 	return ret;
 }
