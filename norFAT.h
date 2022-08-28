@@ -3,7 +3,7 @@
 #include "norFATconfig.h"
 #include <stdint.h>
 
-#define NORFAT_VERSION              "1.02"
+#define NORFAT_VERSION              "1.03"
 #define NORFAT_ERR_EMPTY            (-20)
 #define NORFAT_ERR_CORRUPT          (-10)
 #define NORFAT_ERR_MALLOC           (-8)
@@ -14,7 +14,7 @@
 #define NORFAT_ERR_FULL             (-3)
 #define NORFAT_ERR_CRC              (-2)
 #define NORFAT_ERR_IO               (-1)
-#define NORFAT_OK                   (0 )
+#define NORFAT_OK                   (0)
 
 #ifndef NORFAT_MAX_TABLES
 #define NORFAT_MAX_TABLES 16
@@ -23,6 +23,26 @@
 #ifndef NORFAT_CRC_COUNT
 #error NORFAT_CRC_COUNT must be defined in norFATconfig.h
 #endif
+
+typedef struct {
+  uint8_t fileName[NORFAT_MAX_FILENAME];
+  uint32_t fileLen;
+  uint32_t timeStamp;
+  uint32_t crc;
+} norFAT_fileHeader;
+
+typedef struct {
+  uint32_t startSector;
+  uint32_t position;
+  norFAT_fileHeader fh;
+  uint32_t oldFileSector;
+  int32_t currentSector;
+  uint32_t rwPosInSector;
+  uint32_t openFlags;
+  int lastError;
+  uint32_t zeroCopy : 1;
+  uint32_t error : 1;
+} norfat_FILE;
 
 typedef union {
   struct {
@@ -78,33 +98,16 @@ typedef struct {
   // Non userspace stuff
   uint32_t firstFAT;
   uint32_t volumeMounted;
+  // Working buffer for fopen, norfat_exists
+  norFAT_fileHeader fh;
   int lastError;
+
 } norFAT_FS;
-
-typedef struct {
-  uint8_t fileName[NORFAT_MAX_FILENAME];
-  uint32_t fileLen;
-  uint32_t timeStamp;
-  uint32_t crc;
-} norFAT_fileHeader;
-
-typedef struct {
-  uint32_t startSector;
-  uint32_t position;
-  norFAT_fileHeader *fh;
-  uint32_t oldFileSector;
-  int32_t currentSector;
-  uint32_t rwPosInSector;
-  uint32_t openFlags;
-  int lastError;
-  uint32_t zeroCopy : 1;
-  uint32_t error : 1;
-} norfat_FILE;
 
 int norfat_mount(norFAT_FS *fs);
 int norfat_format(norFAT_FS *fs);
-norfat_FILE *norfat_fopen(norFAT_FS *fs, const char *filename,
-                          const char *mode);
+int norfat_fopen(norFAT_FS *fs, const char *filename, const char *mode,
+                 norfat_FILE *file);
 int norfat_fclose(norFAT_FS *fs, norfat_FILE *stream);
 size_t norfat_fwrite(norFAT_FS *fs, const void *ptr, size_t size, size_t count,
                      norfat_FILE *stream);
@@ -114,7 +117,7 @@ int norfat_remove(norFAT_FS *fs, const char *filename);
 size_t norfat_flength(norfat_FILE *file);
 int norfat_fsinfo(norFAT_FS *fs);
 
-/* norfat_exists()
+  /* norfat_exists()
  * Returns:
  * < 0 error
  * 0 = File not found
