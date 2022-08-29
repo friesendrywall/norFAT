@@ -12,7 +12,7 @@
 #define NORFAT_TABLE_COUNT 6
 
 #define TRACE_BUFFER_SIZE (10 * 1024 * 1024)
-uint32_t POWER_CYCLE_COUNT = 250000;
+uint32_t POWER_CYCLE_COUNT = 25000;
 #define BLOCK_SIZE (NORFAT_SECTORS * NORFAT_SECTOR_SIZE)
 uint8_t block[BLOCK_SIZE];
 
@@ -267,6 +267,16 @@ finalize:
   return res;
 }
 
+int32_t traceHelper[64];
+uint32_t traceIndex = 0;
+void tracePoint(int32_t p) {
+  traceHelper[traceIndex] = p;
+  traceIndex++;
+  if (traceIndex == 64) {
+    traceIndex = 0;
+  }
+}
+
 int PowerStressTest(norFAT_FS *fs) {
   uint32_t i, j, tl, testLength, powered;
   uint32_t powerCycleTest = 0;
@@ -334,6 +344,7 @@ int PowerStressTest(norFAT_FS *fs) {
         printf("File Failed %i\r\n", res);
         break;
       }
+      res = 0;
       continue;
     }
     res = norfat_fread(fs, compare, 1, 0x9988, &f);
@@ -358,7 +369,6 @@ int PowerStressTest(norFAT_FS *fs) {
       break;
     }
     takeDownTest = 1;
-
     // powerCycleTest = 0;
     res = norfat_fopen(fs, "powercycles.txt", "rb", &f);
     //if (res != NORFAT_ERR_FILE_NOT_FOUND) {
@@ -423,7 +433,6 @@ int PowerStressTest(norFAT_FS *fs) {
         bytesWritten += res;
         j -= tl;
       }
-
       res = norfat_fclose(fs, &f);
       if (res) {
         if (res != NORFAT_ERR_IO) {
