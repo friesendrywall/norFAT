@@ -2,6 +2,7 @@
 #define NORFAT_H
 #include "norFATconfig.h"
 #include <stdint.h>
+#include <stdlib.h>
 
 #define NORFAT_VERSION              "1.04"
 #define NORFAT_ERR_EMPTY            (-20)
@@ -26,7 +27,7 @@
 #endif
 
 typedef struct {
-  uint8_t fileName[NORFAT_MAX_FILENAME];
+  char fileName[NORFAT_MAX_FILENAME];
   uint32_t fileLen;
   uint32_t timeStamp;
   uint32_t crc;
@@ -36,7 +37,7 @@ typedef struct {
   uint32_t startSector;
   uint32_t position;
   norFAT_fileHeader fh;
-  uint32_t oldFileSector;
+  int32_t oldFileSector;
   int32_t currentSector;
   uint32_t rwPosInSector;
   uint32_t openFlags;
@@ -117,10 +118,10 @@ size_t norfat_fread(norFAT_FS *fs, void *ptr, size_t size, size_t count,
                     norfat_FILE *stream);
 int norfat_remove(norFAT_FS *fs, const char *filename);
 size_t norfat_flength(norfat_FILE *file);
-int norfat_fsinfo(norFAT_FS *fs);
+int norfat_fsinfo(norFAT_FS *fs, char *buff, int32_t maxLen);
 
 #ifdef NORFAT_COVERAGE_TEST
-void norfat_fsMetaData(void);
+int norfat_fsMetaData(char *buff, int32_t maxLen);
 #endif
 
   /* norfat_exists()
@@ -130,7 +131,7 @@ void norfat_fsMetaData(void);
  * > 0 File length
  */
 int norfat_exists(norFAT_FS *fs, const char *filename);
-int norfat_ferror(norFAT_FS *fs, norfat_FILE *file);
+int norfat_ferror(norfat_FILE *file);
 int norfat_errno(norFAT_FS *fs);
 
 #endif

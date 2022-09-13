@@ -247,9 +247,9 @@ int PowerFailOnWriteTest(norFAT_FS *fs) {
   }
   res = norfat_fread(fs, compare, 1, 0x9988, &f);
   if (res != 0x9988) {
-    printf("File Failed %i %i\r\n", res, norfat_ferror(fs, &f));
+    printf("File Failed %i %i\r\n", res, norfat_ferror(&f));
     if (res == 0) {
-      res = norfat_ferror(fs, &f);
+      res = norfat_ferror(&f);
     }
     goto finalize;
     ;
@@ -380,7 +380,7 @@ int PowerStressTest(norFAT_FS *fs) {
     if (res != 0x9988) {
       printf("File Failed %i\r\n", res);
       if (res == 0) {
-        res = norfat_ferror(fs, &f);
+        res = norfat_ferror(&f);
         if (res == NORFAT_ERR_IO) {
           res = 0;
           continue;
@@ -455,7 +455,7 @@ int PowerStressTest(norFAT_FS *fs) {
         res = norfat_fwrite(fs, &test[testLength - j], 1, tl, &f);
         if (res != tl) {
           if (res == 0) {
-            res = norfat_ferror(fs, &f);
+            res = norfat_ferror(&f);
           }
           break;
         }
@@ -493,9 +493,12 @@ int PowerStressTest(norFAT_FS *fs) {
   if (res) {
     printf("Mount failed err %i\r\n", res);
   }
-  res = norfat_fsinfo(fs);
+  char pBuff[1024];
+  (void)norfat_fsinfo(fs, pBuff, sizeof(pBuff));
+  printf("%s", pBuff);
 #ifdef NORFAT_COVERAGE_TEST
-  (void)norfat_fsMetaData();
+  (void)norfat_fsMetaData(pBuff, sizeof(pBuff));
+  printf("%s", pBuff);
 #endif
   return res;
 }
@@ -634,7 +637,8 @@ int randomWriteLengths(norFAT_FS *fs) {
     return 1;
   } else {
     printf("\r\n");
-    norfat_fsinfo(fs);
+    char pBuff[512];
+    norfat_fsinfo(fs, pBuff, sizeof(pBuff));
     printf("\r\nRollover test succeeded\r\n");
     return 0;
   }

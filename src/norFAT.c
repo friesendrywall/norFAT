@@ -44,7 +44,7 @@ static uint32_t crc32(void *buf, int len, uint32_t Seed);
 #define NORFAT_CRC crc32
 
 uint32_t crc32(void *buf, int len, uint32_t Seed) {
-  NORFAT_TRACE(("CRC:0x%X|%i|0x%X\r\n", (uint64_t)buf, len, Seed));
+  NORFAT_TRACE(("CRC:0x%p|%i|0x%X\r\n", buf, len, Seed));
   unsigned char *p;
   uint32_t crc = Seed;
   if (!crc32_table[1]) { /* if not already done, */
@@ -79,7 +79,7 @@ static uint32_t calcTableCrc(norFAT_FS *fs, uint32_t index) {
 }
 
 static void updateTableCrc(norFAT_FS *fs, uint32_t index) {
-  uint8_t cr[9];
+  char cr[9];
   NORFAT_TRACE(("updateTableCrc[%i]\r\n", index));
   uint32_t crcRes = calcTableCrc(fs, index);
   snprintf(cr, 9, "%08X", crcRes);
@@ -151,7 +151,7 @@ static int32_t eraseTable(norFAT_FS *fs, uint32_t tableIndex) {
 
 static uint32_t loadTable(norFAT_FS *fs, uint32_t tableIndex) {
   uint32_t crcRes, j;
-  uint8_t cr[9];
+  char cr[9];
   tableIndex %= fs->tableCount;
   NORFAT_TRACE(("loadTable(%i)\r\n", tableIndex));
   if (fs->read_block_device(
@@ -182,7 +182,7 @@ static int32_t validateTable(norFAT_FS *fs, uint32_t tableIndex,
                              uint32_t *crc) {
   uint32_t crcRes, j;
   int32_t res = NORFAT_TABLE_GOOD;
-  uint8_t cr[9];
+  char cr[9];
   tableIndex %= fs->tableCount;
   NORFAT_TRACE(("validateTable(%i)\r\n", tableIndex));
   _FAT *fat = (_FAT *)fs->buff;
@@ -301,7 +301,7 @@ static int fileSearch(norFAT_FS *fs, const char *filename, uint32_t *sector,
       NORFAT_TRACE(("[%s]", fs->buff));
       // Somewhat wasteful, but we need to allow read function to call
       // cache routines on a safe buffer
-      if (strcmp(fs->buff, filename) == 0) {
+      if (strcmp((char *)fs->buff, filename) == 0) {
         *sector = i;
         NORFAT_TRACE(("sector[%i]\r\n", i));
         NORFAT_DEBUG(("File %s found at sector %i\r\n", filename, i));
@@ -454,7 +454,7 @@ int norfat_mount(norFAT_FS *fs) {
       NORFAT_TABLE_BYTES(fs->flashSectors) < fs->tableSectors * fs->sectorSize);
 
   fs->lastError = NORFAT_OK;
-  uint32_t sectorState[NORFAT_MAX_TABLES];
+  int32_t sectorState[NORFAT_MAX_TABLES];
   uint32_t sectorCRC[NORFAT_MAX_TABLES];
   /* Scan tables for valid records */
   for (i = 0; i < (int32_t)fs->tableCount; i++) {
@@ -597,7 +597,7 @@ int norfat_mount(norFAT_FS *fs) {
       if (res) {
         return res;
       }
-      /* fallthrough to finish up */
+      /* fallthrough */
     case 0x2022: /* |EMPTY|GOOD |EMPTY|EMPTY| */
       res = loadTable(fs, ui + 1);
       if (res) {
@@ -625,6 +625,7 @@ int norfat_mount(norFAT_FS *fs) {
       if (res) {
         return res;
       }
+      /* fallthrough */
     case 0x2202: /* |EMPTY|EMPTY|GOOD |EMPTY|*/
       res = loadTable(fs, ui + 2);
       if (res) {
@@ -799,7 +800,7 @@ int norfat_mount(norFAT_FS *fs) {
   }
   fs->volumeMounted = 1;
   NORFAT_TRACE(("norfat_mount:mounted\r\n"));
-  NORFAT_DEBUG(("Volume is mounted\r\n"));
+  NORFAT_INFO(("Volume is mounted\r\n"));
   return 0;
 }
 
@@ -843,51 +844,69 @@ int norfat_format(norFAT_FS *fs) {
     return NORFAT_ERR_IO;
   }
   fs->firstFAT = 0;
+  NORFAT_INFO(("Volume is formatted\r\n"));
   NORFAT_TRACE(("FORMAT:done\r\n"));
   return 0;
 }
 
 #ifdef NORFAT_COVERAGE_TEST
 
-void norfat_fsMetaData(void) {
+int norfat_fsMetaData(char * buff, int32_t maxLen) {
   uint32_t i = 0;
   int32_t j = 0;
   uint32_t len = 0;
-  NORFAT_INFO_PRINT(("\r\nnorFAT Version %s\r\n", NORFAT_VERSION));
-  NORFAT_INFO_PRINT(("\r\nScenario list\r\n"));
+  uint32_t spLen;
+  char *val;
+  spLen = NORFAT_INFO_SNPRINT((buff, maxLen,
+                               "\r\nnorFAT Version %s\r\n"
+                               "\r\nScenario list\r\n",
+                               NORFAT_VERSION));
+  maxLen -= spLen;
+  buff += spLen;
+  
   while (scenarioList[len]) {
     len++;
   }
   /* |GOOD |EMPTY|EMPTY| OLD |*/
   for (i = 0; i < len; i++) {
-    NORFAT_INFO_PRINT(("[%02i] 0x%04X |", i, scenarioList[i]));
+    spLen = NORFAT_INFO_SNPRINT(
+        (buff, maxLen > 0 ? maxLen : 0, "[%02i] 0x%04X |", i, scenarioList[i]));
+    maxLen -= spLen;
+    buff += spLen;
     for (j = 3; j >= 0; j--) {
       uint8_t block = (scenarioList[i] >> (j * 4)) & 0xF;
       switch (block) {
       case 0:
-        NORFAT_INFO_PRINT(("GOOD |"));
+        val = "GOOD |";
         break;
       case 1:
-        NORFAT_INFO_PRINT((" OLD |"));
+        val = " OLD |";
         break;
       case 2:
-        NORFAT_INFO_PRINT(("EMPTY|"));
+        val = "EMPTY|";
         break;
       case 3:
-        NORFAT_INFO_PRINT((" BAD |"));
+        val = " BAD |";
         break;
       }
+      spLen = NORFAT_INFO_SNPRINT((buff, maxLen > 0 ? maxLen : 0, "%s", val));
+      maxLen -= spLen;
+      buff += spLen;
     }
-    NORFAT_INFO_PRINT((" %i\r\n", scenarioCnt[i]));
+    spLen = NORFAT_INFO_SNPRINT(
+        (buff, maxLen > 0 ? maxLen : 0, "%i\r\n", scenarioCnt[i]));
+    maxLen -= spLen;
+    buff += spLen;
   }
 }
 
 #endif
 
-int norfat_fsinfo(norFAT_FS *fs) {
+int norfat_fsinfo(norFAT_FS *fs, char * buff, int32_t maxLen) {
   NORFAT_ASSERT(fs);
   NORFAT_ASSERT(fs->volumeMounted);
-  uint32_t i;
+  char * pin = buff;
+  uint32_t i, len;
   uint32_t bytesFree = 0;
   uint32_t bytesUsed = 0;
   uint32_t bytesUncollected = 0;
@@ -897,10 +916,14 @@ int norfat_fsinfo(norFAT_FS *fs) {
   norFAT_fileHeader f;
   struct tm ts;
   time_t now;
-  uint8_t buf[32];
-  NORFAT_INFO_PRINT(("\r\nnorFAT Version %s\r\n", NORFAT_VERSION));
-  NORFAT_INFO_PRINT(("\r\nVolume info:Capacity %9i\r\n",
-                     (fs->flashSectors * fs->sectorSize) - tableOverhead));
+  char buf[32];
+  len = NORFAT_INFO_SNPRINT((buff, maxLen,
+      "\r\nnorFAT Version %s"
+       "\r\nVolume info:Capacity %9i KiB\r\n",
+       NORFAT_VERSION, 
+       ((fs->flashSectors * fs->sectorSize) - tableOverhead) / 1024));
+  maxLen -= len;
+  buff += len;
   for (i = (fs->tableCount * fs->tableSectors); i < fs->flashSectors; i++) {
     if ((fs->fat->sector[i].base & NORFAT_SOF_MSK) == NORFAT_SOF_MATCH) {
       if (fs->read_block_device(fs->addressStart + (i * fs->sectorSize),
@@ -912,8 +935,10 @@ int norfat_fsinfo(norFAT_FS *fs) {
       now = (time_t)f.timeStamp;
       ts = *localtime(&now);
       strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &ts);
-      NORFAT_INFO_PRINT(
-          ("%s  %9i %s\r\n", buf, (int)f.fileLen % 1000, f.fileName));
+      len = NORFAT_INFO_SNPRINT((buff, maxLen > 0 ? maxLen : 0, "%s  %9i %s\r\n",
+                               buf, (int)f.fileLen % 1000, f.fileName));
+      maxLen -= len;
+      buff += len;
       bytesUsed += f.fileLen;
       fileCount++;
     } else if (fs->fat->sector[i].available) {
@@ -925,13 +950,19 @@ int norfat_fsinfo(norFAT_FS *fs) {
     } else {
     }
   }
-  NORFAT_INFO_PRINT(("     Files    %9i\r\n", fileCount));
-  NORFAT_INFO_PRINT(("     Used     %9i\r\n", bytesUsed));
-  NORFAT_INFO_PRINT(("     Free     %9i\r\n", bytesFree));
 
-  NORFAT_INFO_PRINT(("     Swaps %i\r\n", fs->fat->swapCount));
-  NORFAT_INFO_PRINT(("     Garbage %i\r\n", fs->fat->garbageCount));
-  return 0;
+  buff += NORFAT_INFO_SNPRINT((buff, maxLen > 0 ? maxLen : 0,
+      "     Files    %9i\r\n"
+      "     Used     %9i\r\n"
+      "     Free     %9i\r\n"
+      "     Swaps    %9i\r\n"
+      "     Garbage  %9i\r\n",
+      fileCount,
+      bytesUsed,
+      bytesFree,
+      fs->fat->swapCount,
+      fs->fat->garbageCount));
+  return (int)(buff - pin);
 }
 
 int norfat_fopen(norFAT_FS *fs, const char *filename, const char *mode,
@@ -1040,12 +1071,6 @@ int norfat_fclose(norFAT_FS *fs, norfat_FILE *stream) {
     ret = NORFAT_ERR_IO;
     goto finalize;
   }
-#if 0
-	memset(fs->buff, 0xFF, fs->programSize);
-	stream->fh->fileLen = stream->position;
-	stream->fh->timeStamp = time(NULL);
-	memcpy(fs->buff, stream->fh, sizeof(norFAT_fileHeader));
-#endif
   if (stream->error && stream->openFlags & NORFAT_FLAG_WRITE) {
     // invalidate the last
     if (stream->startSector != NORFAT_INVALID_SECTOR) {
@@ -1459,7 +1484,9 @@ int norfat_exists(norFAT_FS *fs, const char *filename) {
   return ret == NORFAT_ERR_FILE_NOT_FOUND ? 0 : ret;
 }
 
-int norfat_ferror(norFAT_FS *fs, norfat_FILE *file) { return file->error; }
+int norfat_ferror(norfat_FILE *file) {
+  return file->error;
+}
 
 int norfat_errno(norFAT_FS *fs) { return fs->lastError; }
 

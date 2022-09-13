@@ -11,7 +11,8 @@
 
 #define NORFAT_DEBUG(x) // printf x
 #define NORFAT_ERROR(x) // printf x
-#define NORFAT_INFO_PRINT(x) printf x
+#define NORFAT_INFO(x) // printf x
+#define NORFAT_INFO_SNPRINT(x) snprintf x
 
 int traceHandler(const char *format, ...);
 #define NORFAT_TRACE(x) traceHandler x
