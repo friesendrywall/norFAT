@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "norFAT.h"
+#include "src/norFAT.h"
 
 #define NORFAT_SECTORS 2048
 #define NORFAT_SECTOR_SIZE 4096
