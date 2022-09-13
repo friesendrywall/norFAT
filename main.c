@@ -11,8 +11,13 @@
 #define NORFAT_TABLE_SECTORS 3
 #define NORFAT_TABLE_COUNT 6
 
+#define TAKE_DOWN_READ  (1UL << 0)
+#define TAKE_DOWN_ERASE (1UL << 1)
+#define TAKE_DOWN_WRITE (1UL << 2)
+uint32_t takeDownFlags = 0;
+
 #define TRACE_BUFFER_SIZE (10 * 1024 * 1024)
-uint32_t POWER_CYCLE_COUNT = 25000;
+uint32_t POWER_CYCLE_COUNT = 200000;
 #define BLOCK_SIZE (NORFAT_SECTORS * NORFAT_SECTOR_SIZE)
 uint8_t block[BLOCK_SIZE];
 
@@ -29,7 +34,7 @@ uint32_t read_block_device(uint32_t address, uint8_t *data, uint32_t len) {
   if (address + len > BLOCK_SIZE) {
     NORFAT_ASSERT(0);
   }
-  if (takeDownTest) {
+  if (takeDownTest && (takeDownFlags & TAKE_DOWN_READ)) {
 
     if (takeDownPeriod != 0) {
       takeDownPeriod--;
@@ -52,7 +57,7 @@ uint32_t erase_block_sector(uint32_t address) {
   if (address + NORFAT_SECTOR_SIZE > BLOCK_SIZE) {
     NORFAT_ASSERT(0);
   }
-  if (takeDownTest) {
+  if (takeDownTest && (takeDownFlags & TAKE_DOWN_ERASE)) {
 
     if (takeDownPeriod != 0) {
       takeDownPeriod--;
@@ -84,7 +89,7 @@ uint32_t program_block_page(uint32_t address, uint8_t *data, uint32_t length) {
   if (address + length > BLOCK_SIZE) {
     NORFAT_ASSERT(0);
   }
-  if (takeDownTest) {
+  if (takeDownTest && (takeDownFlags & TAKE_DOWN_WRITE)) {
 
     if (takeDownPeriod != 0) {
       takeDownPeriod--;
@@ -319,7 +324,27 @@ int PowerStressTest(norFAT_FS *fs) {
   while (res == 0) {
     powered = 1;
     takeDownTest = 1;
-    takeDownPeriod = 1 + (getRand() % 2500);
+    switch (getRand() % 4) {
+    case 0:
+      takeDownFlags = TAKE_DOWN_ERASE;
+      takeDownPeriod = 1 + (getRand() % 20);
+      break;
+    case 1:
+      takeDownFlags = TAKE_DOWN_WRITE;
+      takeDownPeriod = 1 + (getRand() % 1500);
+      break;
+    case 2:
+      takeDownFlags = TAKE_DOWN_ERASE;
+      takeDownPeriod = 1 + (getRand() % 10);
+      break;
+    case 3:
+    default:
+      takeDownPeriod = 1 + (getRand() % 2500);
+      takeDownFlags = TAKE_DOWN_ERASE | TAKE_DOWN_WRITE;
+      break;
+    }
+    
+
     // printf("Mount attempt .......\r\n");
     res = norfat_mount(fs);
     if (res == NORFAT_ERR_IO) {
@@ -335,7 +360,11 @@ int PowerStressTest(norFAT_FS *fs) {
     }
 
     if (cycles % 1000 == 0) {
-      printf("%i", cycles);
+      printf("%05i", cycles);
+    }
+
+    if (cycles % 5000 == 0) {
+      printf("\r\n");
     }
     takeDownTest = 0;
     res = norfat_fopen(fs, "validate.bin", "r", &f);
@@ -447,8 +476,9 @@ int PowerStressTest(norFAT_FS *fs) {
     }
     res = 0;
     if (cycles-- == 0) {
-      printf("\r\nPower stress test passed (%i)\r\n%i KB written\r\n",
-             powerCycleTestResult, (int)(bytesWritten / 1000));
+      printf("\r\nPower stress test passed (%i/%i)\r\n%i KB written\r\n",
+             powerCycleTestResult, POWER_CYCLE_COUNT,
+             (int)(bytesWritten / 1000));
       break;
     }
   }
@@ -464,6 +494,9 @@ int PowerStressTest(norFAT_FS *fs) {
     printf("Mount failed err %i\r\n", res);
   }
   res = norfat_fsinfo(fs);
+#ifdef NORFAT_COVERAGE_TEST
+  (void)norfat_fsMetaData();
+#endif
   return res;
 }
 
@@ -788,7 +821,7 @@ int main(int argv, char **argc) {
   norFAT_FS fs2 = {
       .addressStart = 0,
       .tableCount =
-          NORFAT_TABLE_COUNT, // FAT tables carved out of flash sectors
+          NORFAT_TABLE_COUNT - 2, // FAT tables carved out of flash sectors
       .tableSectors = NORFAT_TABLE_SECTORS,
       .flashSectors = NORFAT_SECTORS,
       .sectorSize = NORFAT_SECTOR_SIZE,

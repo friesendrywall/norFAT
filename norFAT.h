@@ -3,8 +3,9 @@
 #include "norFATconfig.h"
 #include <stdint.h>
 
-#define NORFAT_VERSION              "1.03"
+#define NORFAT_VERSION              "1.04"
 #define NORFAT_ERR_EMPTY            (-20)
+#define NORFAT_ERR_FILECRC          (-12)
 #define NORFAT_ERR_CORRUPT          (-10)
 #define NORFAT_ERR_MALLOC           (-8)
 #define NORFAT_ERR_FILE_NOT_FOUND   (-7)
@@ -42,6 +43,7 @@ typedef struct {
   int lastError;
   uint32_t zeroCopy : 1;
   uint32_t error : 1;
+  uint32_t crcValidate;
 } norfat_FILE;
 
 typedef union {
@@ -99,7 +101,7 @@ typedef struct {
   uint32_t firstFAT;
   uint32_t volumeMounted;
   // Working buffer for fopen, norfat_exists
-  norFAT_fileHeader fh;
+  // norFAT_fileHeader fh;
   int lastError;
 
 } norFAT_FS;
@@ -116,6 +118,10 @@ size_t norfat_fread(norFAT_FS *fs, void *ptr, size_t size, size_t count,
 int norfat_remove(norFAT_FS *fs, const char *filename);
 size_t norfat_flength(norfat_FILE *file);
 int norfat_fsinfo(norFAT_FS *fs);
+
+#ifdef NORFAT_COVERAGE_TEST
+void norfat_fsMetaData(void);
+#endif
 
   /* norfat_exists()
  * Returns:

@@ -1,1 +1,4 @@
 .vs/
+x64/
+norfat_trace.txt
+norFAT.vcxproj.user
