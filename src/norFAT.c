@@ -936,7 +936,7 @@ int norfat_fsinfo(norFAT_FS *fs, char * buff, int32_t maxLen) {
       ts = *localtime(&now);
       strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &ts);
       len = NORFAT_INFO_SNPRINT((buff, maxLen > 0 ? maxLen : 0, "%s  %9i %s\r\n",
-                               buf, (int)f.fileLen % 1000, f.fileName));
+                               buf, (int)f.fileLen, f.fileName));
       maxLen -= len;
       buff += len;
       bytesUsed += f.fileLen;
