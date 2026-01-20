@@ -5,6 +5,9 @@
 #include <stdlib.h>
 
 #define NORFAT_VERSION              "1.04"
+#if NORFAT_USE_LOCK == 1
+#define NORFAT_ERR_MUTEX            (-22)
+#endif
 #define NORFAT_ERR_EMPTY            (-20)
 #define NORFAT_ERR_FILECRC          (-12)
 #define NORFAT_ERR_CORRUPT          (-10)
@@ -104,6 +107,9 @@ typedef struct {
   // Working buffer for fopen, norfat_exists
   // norFAT_fileHeader fh;
   int lastError;
+  #if NORFAT_USE_LOCK == 1
+  NORFAT_MUTEX_HANDLE fsMutex;
+  #endif
 
 } norFAT_FS;
 
