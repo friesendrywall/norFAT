@@ -25,6 +25,9 @@ uint32_t EraseCounts[NORFAT_SECTORS];
 
 uint32_t takeDownPeriod = 0;
 uint32_t takeDownTest = 0;
+/* Targeted one-shot fault hook for the fclose header-program repro. */
+uint32_t g_failNextHeaderProg = 0;
+uint32_t g_headerProgAddr = 0;
 
 FILE *traceFile = NULL;
 char *traceBuffer = NULL;
@@ -82,6 +85,10 @@ uint32_t erase_block_sector(uint32_t address) {
 
 uint32_t program_block_page(uint32_t address, uint8_t *data, uint32_t length) {
   uint32_t i;
+  if (g_failNextHeaderProg && address == g_headerProgAddr) {
+    g_failNextHeaderProg = 0; /* report failure once, no corruption */
+    return 1;
+  }
   if (address <
       NORFAT_TABLE_SECTORS * NORFAT_TABLE_COUNT * NORFAT_SECTOR_SIZE) {
     traceHandler("program_block_page(0x%X)(%i)\r\n", address, length);
@@ -765,8 +772,127 @@ int deleteTest(norFAT_FS *fs) {
   return 0;
 }
 
+/* --- Minimal deterministic repro: fclose header-program failure --- */
+/* Counts start-of-file sectors carrying a name (mirrors fileSearch scan,
+ * but does not stop at the first hit, so it can see duplicates). */
+static int countFileInstances(norFAT_FS *fs, const char *fn, uint32_t *f1,
+                              uint32_t *f2) {
+  uint32_t i;
+  int c = 0;
+  uint32_t a = 0xFFFFFFFF, b = 0xFFFFFFFF;
+  norFAT_fileHeader *fh = (norFAT_fileHeader *)fs->buff;
+  for (i = fs->tableCount * fs->tableSectors; i < fs->flashSectors; i++) {
+    if ((fs->fat->sector[i].base & 0x70000000) == 0x30000000) {
+      if (fs->read_block_device(fs->addressStart + i * fs->sectorSize, fs->buff,
+                                sizeof(norFAT_fileHeader))) {
+        return NORFAT_ERR_IO;
+      }
+      if (strcmp((char *)fh->fileName, fn) == 0) {
+        if (c == 0) {
+          a = i;
+        } else if (c == 1) {
+          b = i;
+        }
+        c++;
+      }
+    }
+  }
+  if (f1) {
+    *f1 = a;
+  }
+  if (f2) {
+    *f2 = b;
+  }
+  return c;
+}
+
+/* Returns 0 on pass. Reproduces the case where a reported program failure
+ * on the overwrite header page leaves fs->lastError unset (volume not locked
+ * out), which is the defect behind the duplicate filename. */
+int headerProgramFailTest(norFAT_FS *fs) {
+  norfat_FILE f;
+  int32_t res;
+  int instances, fail = 0;
+  uint32_t s1, s2;
+  const char *fname = "dup.bin";
+  uint8_t a[64], b[64];
+  int k;
+  for (k = 0; k < 64; k++) {
+    a[k] = (uint8_t)k;
+    b[k] = (uint8_t)(0xFF - k);
+  }
+
+  res = norfat_format(fs);
+  if (res) {
+    printf("headerProgFail: format %i\r\n", res);
+    return 1;
+  }
+  res = norfat_mount(fs);
+  if (res) {
+    printf("headerProgFail: mount %i\r\n", res);
+    return 1;
+  }
+
+  /* generation 1 (clean) */
+  res = norfat_fopen(fs, fname, "wb", &f);
+  if (res) {
+    printf("headerProgFail: open1 %i\r\n", res);
+    return 1;
+  }
+  if (norfat_fwrite(fs, a, 1, sizeof(a), &f) != sizeof(a)) {
+    printf("headerProgFail: write1 short\r\n");
+    return 1;
+  }
+  if (norfat_fclose(fs, &f)) {
+    printf("headerProgFail: close1\r\n");
+    return 1;
+  }
+
+  /* generation 2 (overwrite) with the header program forced to fail */
+  res = norfat_fopen(fs, fname, "wb", &f);
+  if (res) {
+    printf("headerProgFail: open2 %i\r\n", res);
+    return 1;
+  }
+  if (norfat_fwrite(fs, b, 1, sizeof(b), &f) != sizeof(b)) {
+    printf("headerProgFail: write2 short\r\n");
+    return 1;
+  }
+  g_headerProgAddr = fs->addressStart + (f.startSector * fs->sectorSize);
+  g_failNextHeaderProg = 1;
+  res = norfat_fclose(fs, &f);
+
+  if (res == NORFAT_OK) {
+    printf("headerProgFail: FAIL fclose returned OK\r\n");
+    fail = 1;
+  }
+  /* The invariant: any fs IO error must arm the lockout. */
+  if (norfat_errno(fs) != NORFAT_ERR_IO) {
+    printf("headerProgFail: FAIL lockout not armed (errno=%i)\r\n",
+           norfat_errno(fs));
+    fail = 1;
+  }
+  /* And no duplicate may exist after a recovery remount. */
+  res = norfat_mount(fs);
+  if (res && res != NORFAT_ERR_EMPTY) {
+    printf("headerProgFail: remount %i\r\n", res);
+    return 1;
+  }
+  instances = countFileInstances(fs, fname, &s1, &s2);
+  if (instances >= 2) {
+    printf("headerProgFail: FAIL '%s' x%i (sec %u,%u)\r\n", fname, instances,
+           s1, s2);
+    fail = 1;
+  }
+  if (!fail) {
+    printf("headerProgFail: passed\r\n");
+  }
+  return fail;
+}
+
 int runTestSuite(norFAT_FS *fs) {
   int res = 0;
+
   res = PowerStressTest(fs);
   if (res) {
     printf("Power cycle stress test failed err %i\r\n", res);
@@ -805,6 +931,14 @@ int runTestSuite(norFAT_FS *fs) {
     writeTraceToFile();
     return res;
   }
+
+  res = headerProgramFailTest(fs);
+  if (res) {
+    printf("Header program fail test failed %i\r\n", res);
+    writeTraceToFile();
+    return res;
+  }
+
   printf("Passed all tests\r\n");
   return res;
 }

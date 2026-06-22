@@ -1120,6 +1120,7 @@ int norfat_fclose(norFAT_FS *fs, norfat_FILE *stream) {
                                    (stream->startSector * fs->sectorSize),
                                fs->buff, fs->programSize)) {
       ret = NORFAT_ERR_IO;
+      fs->lastError = NORFAT_ERR_IO;
       NORFAT_TRACE(("NORFAT_ERR_IO\r\n"));
       goto finalize;
     }
