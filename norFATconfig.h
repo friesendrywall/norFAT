@@ -24,4 +24,10 @@ void assertHandler(char *file, int line);
   if (!(expr))                                                                 \
   assertHandler(__FILE__, __LINE__)
 
+#define NORFAT_USE_LOCK (1)
+#define NORFAT_MUTEX_HANDLE int
+#define NORFAT_CREATE_MUTEX() 100
+#define NORFAT_TAKE_MUTEX(x) ++x == 101 ? 1 : 0
+#define NORFAT_GIVE_MUTEX(x) (x--)
+
 #endif

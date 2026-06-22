@@ -453,6 +453,12 @@ int norfat_mount(norFAT_FS *fs) {
   NORFAT_ASSERT( // Assure that the total sectors fits in the configured sectors
       NORFAT_TABLE_BYTES(fs->flashSectors) < fs->tableSectors * fs->sectorSize);
 
+  #if NORFAT_USE_LOCK == 1
+  if(fs->fsMutex == NULL){
+    fs->fsMutex = NORFAT_CREATE_MUTEX();
+  }
+  #endif
+
   fs->lastError = NORFAT_OK;
   int32_t sectorState[NORFAT_MAX_TABLES];
   uint32_t sectorCRC[NORFAT_MAX_TABLES];
@@ -898,6 +904,7 @@ int norfat_fsMetaData(char * buff, int32_t maxLen) {
     maxLen -= spLen;
     buff += spLen;
   }
+  return 0;
 }
 
 #endif
@@ -917,6 +924,13 @@ int norfat_fsinfo(norFAT_FS *fs, char * buff, int32_t maxLen) {
   struct tm ts;
   time_t now;
   char buf[32];
+#if NORFAT_USE_LOCK == 1
+  NORFAT_ASSERT(fs->fsMutex);
+  if (!NORFAT_TAKE_MUTEX(fs->fsMutex)) {
+    NORFAT_TRACE(("norfat_fsinfo: mutex fail\r\n"));
+    return NORFAT_ERR_MUTEX;
+  }
+#endif
   len = NORFAT_INFO_SNPRINT((buff, maxLen,
       "\r\nnorFAT Version %s"
        "\r\nVolume info:Capacity %9i KiB\r\n",
@@ -928,6 +942,9 @@ int norfat_fsinfo(norFAT_FS *fs, char * buff, int32_t maxLen) {
     if ((fs->fat->sector[i].base & NORFAT_SOF_MSK) == NORFAT_SOF_MATCH) {
       if (fs->read_block_device(fs->addressStart + (i * fs->sectorSize),
                                 fs->buff, sizeof(norFAT_fileHeader))) {
+#if NORFAT_USE_LOCK == 1
+        NORFAT_GIVE_MUTEX(fs->fsMutex);
+#endif
         return NORFAT_ERR_IO;
       }
 
@@ -936,7 +953,7 @@ int norfat_fsinfo(norFAT_FS *fs, char * buff, int32_t maxLen) {
       ts = *localtime(&now);
       strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &ts);
       len = NORFAT_INFO_SNPRINT((buff, maxLen > 0 ? maxLen : 0, "%s  %9i %s\r\n",
-                               buf, (int)f.fileLen % 1000, f.fileName));
+                               buf, (int)f.fileLen, f.fileName));
       maxLen -= len;
       buff += len;
       bytesUsed += f.fileLen;
@@ -950,6 +967,10 @@ int norfat_fsinfo(norFAT_FS *fs, char * buff, int32_t maxLen) {
     } else {
     }
   }
+
+#if NORFAT_USE_LOCK == 1
+  NORFAT_GIVE_MUTEX(fs->fsMutex);
+#endif
 
   buff += NORFAT_INFO_SNPRINT((buff, maxLen > 0 ? maxLen : 0,
       "     Files    %9i\r\n"
@@ -970,13 +991,21 @@ int norfat_fopen(norFAT_FS *fs, const char *filename, const char *mode,
 
   uint32_t sector;
   uint32_t flags;
-  int retVal;
+  int retVal, openVal;
   NORFAT_ASSERT(fs);
   NORFAT_ASSERT(fs->volumeMounted);
   NORFAT_TRACE(("norfat_fopen(%s,%s)\r\n", filename, mode));
+  #if NORFAT_USE_LOCK == 1
+  NORFAT_ASSERT(fs->fsMutex);
+  if (!NORFAT_TAKE_MUTEX(fs->fsMutex)) {
+    NORFAT_TRACE(("norfat_fopen: mutex fail\r\n"));
+    return NORFAT_ERR_MUTEX;
+  }
+  #endif
   /* Protect fs state */
   if (fs->lastError == NORFAT_ERR_IO) {
-    return NORFAT_ERR_IO;
+    openVal = NORFAT_ERR_IO;
+    goto finalize;
   }
   if (strcmp("r", mode) == 0) {
     flags = NORFAT_FLAG_READ;
@@ -995,7 +1024,8 @@ int norfat_fopen(norFAT_FS *fs, const char *filename, const char *mode,
   } else {
     fs->lastError = NORFAT_ERR_UNSUPPORTED;
     NORFAT_TRACE(("norfat_fopen:unsupported\r\n"));
-    return NORFAT_ERR_UNSUPPORTED;
+    openVal = NORFAT_ERR_UNSUPPORTED;
+    goto finalize;
   }
   memset(file, 0, sizeof(norfat_FILE));
   retVal = fileSearch(fs, filename, &sector, &file->fh, NULL);
@@ -1013,21 +1043,25 @@ int norfat_fopen(norFAT_FS *fs, const char *filename, const char *mode,
       file->crcValidate = 0xFFFFFFFF;
       NORFAT_TRACE(("norfat_fopen:file opened for reading\r\n"));
       NORFAT_DEBUG(("FILE %s opened for reading\r\n", filename));
-      return NORFAT_OK;
+      openVal = NORFAT_OK;
+      goto finalize;
     } else {
       if (fs->lastError == NORFAT_ERR_IO) {
-        return NORFAT_ERR_IO;
+        openVal = NORFAT_ERR_IO;
+        goto finalize;
       }
       NORFAT_TRACE(("NORFAT_ERR_FILE_NOT_FOUND\r\n"));
       fs->lastError = NORFAT_ERR_FILE_NOT_FOUND;
-      return NORFAT_ERR_FILE_NOT_FOUND; // File not found
+      openVal = NORFAT_ERR_FILE_NOT_FOUND; // File not found
+      goto finalize;
     }
   } else if (flags & NORFAT_FLAG_WRITE) {
     if (retVal == NORFAT_ERR_FILE_NOT_FOUND &&
         sector == NORFAT_INVALID_SECTOR &&
         fs->lastError == NORFAT_ERR_IO) {
       NORFAT_TRACE(("norfat_fopen:failed\r\n"));
-      return NORFAT_ERR_IO;
+      openVal = NORFAT_ERR_IO;
+      goto finalize;
     }
     // memset(file, 0, sizeof(norfat_FILE));
     file->oldFileSector = NORFAT_FILE_NOT_FOUND;
@@ -1049,11 +1083,19 @@ int norfat_fopen(norFAT_FS *fs, const char *filename, const char *mode,
     }
     NORFAT_TRACE(("norfat_fopen:file opened for writing\r\n"));
     NORFAT_DEBUG(("FILE %s opened for writing\r\n", filename));
-    return NORFAT_OK;
+    openVal = NORFAT_OK;
+    goto finalize;
   }
   fs->lastError = NORFAT_ERR_UNSUPPORTED;
   NORFAT_TRACE(("norfat_fopen:unsupported fallthrough\r\n"));
-  return NORFAT_ERR_UNSUPPORTED;
+  openVal = NORFAT_ERR_UNSUPPORTED;
+finalize:
+#if NORFAT_USE_LOCK == 1
+  if (openVal != NORFAT_OK) {
+    NORFAT_GIVE_MUTEX(fs->fsMutex);
+  }
+#endif
+    return openVal;
 }
 
 int norfat_fclose(norFAT_FS *fs, norfat_FILE *stream) {
@@ -1204,6 +1246,9 @@ int norfat_fclose(norFAT_FS *fs, norfat_FILE *stream) {
     ret = NORFAT_OK;
   }
 finalize:
+#if NORFAT_USE_LOCK == 1
+  NORFAT_GIVE_MUTEX(fs->fsMutex);
+#endif
   NORFAT_DEBUG(("FILE %s closed\r\n", stream->fh.fileName));
   NORFAT_TRACE(("norfat_fclose(%s):finalize\r\n", stream->fh.fileName));
   return ret;
@@ -1417,13 +1462,22 @@ int norfat_remove(norFAT_FS *fs, const char *filename) {
   NORFAT_ASSERT(fs);
   NORFAT_ASSERT(fs->volumeMounted);
   NORFAT_TRACE(("norfat_remove(%s)\r\n", filename));
+  #if NORFAT_USE_LOCK == 1
+  NORFAT_ASSERT(fs->fsMutex);
+  if (!NORFAT_TAKE_MUTEX(fs->fsMutex)) {
+    NORFAT_TRACE(("norfat_fsinfo: mutex fail\r\n"));
+    return NORFAT_ERR_MUTEX;
+  }
+#endif
   /* Protect fs state */
   if (fs->lastError == NORFAT_ERR_IO) {
-    return NORFAT_ERR_IO;
+    ret = NORFAT_ERR_IO;
+    goto finalize;
   }
   ret = fileSearch(fs, filename, &sector, NULL, NULL);
   if (ret == NORFAT_ERR_FILE_NOT_FOUND) {
-    return NORFAT_OK;
+    ret = NORFAT_OK;
+    goto finalize;
   }
 
   limit = fs->flashSectors;
@@ -1459,6 +1513,9 @@ int norfat_remove(norFAT_FS *fs, const char *filename) {
   NORFAT_DEBUG(("FILE %s delete\r\n", filename));
 finalize:
   NORFAT_TRACE(("norfat_remove:finalize\r\n"));
+#if NORFAT_USE_LOCK == 1
+  NORFAT_GIVE_MUTEX(fs->fsMutex);
+#endif
   return ret;
 }
 
@@ -1469,9 +1526,17 @@ int norfat_exists(norFAT_FS *fs, const char *filename) {
   NORFAT_ASSERT(fs);
   NORFAT_ASSERT(fs->volumeMounted);
   NORFAT_TRACE(("norfat_exists(%s)\r\n", filename));
+#if NORFAT_USE_LOCK == 1
+  NORFAT_ASSERT(fs->fsMutex);
+  if (!NORFAT_TAKE_MUTEX(fs->fsMutex)) {
+    NORFAT_TRACE(("norfat_fsinfo: mutex fail\r\n"));
+    return NORFAT_ERR_MUTEX;
+  }
+#endif
   /* Protect fs state */
   if (fs->lastError == NORFAT_ERR_IO) {
-    return NORFAT_ERR_IO;
+    ret = NORFAT_ERR_IO;
+    goto finalize;
   }
   ret = fileSearch(fs, filename, &sector, NULL, &fLen);
 
@@ -1479,9 +1544,14 @@ int norfat_exists(norFAT_FS *fs, const char *filename) {
     ret = fLen;
   } else {
     if (fs->lastError == NORFAT_ERR_IO) {
-      return NORFAT_ERR_IO;
+      ret = NORFAT_ERR_IO;
+      goto finalize;
     }
   }
+ finalize:
+#if NORFAT_USE_LOCK == 1
+  NORFAT_GIVE_MUTEX(fs->fsMutex);
+#endif
   return ret == NORFAT_ERR_FILE_NOT_FOUND ? 0 : ret;
 }
 
